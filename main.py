@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import sqlite3
 import calendar
 import os
-from datetime import date, datetime
+from datetime import date
 from werkzeug.security import generate_password_hash, check_password_hash
 
 
@@ -22,7 +22,7 @@ st.set_page_config(
 DB_PATH = os.environ.get("DB_PATH", "emotion_weather.db")
 MAX_PHOTO_SIZE = 5 * 1024 * 1024
 DIARY_PHOTO_WIDTH = 300
-CALENDAR_PHOTO_WIDTH = 200
+CALENDAR_PHOTO_WIDTH = 150
 
 WEATHER_OPTIONS = {
     "맑음": {"score": 5, "emoji": "☀️"},
@@ -35,18 +35,18 @@ WEATHER_OPTIONS = {
 }
 
 EMOTION_ADVICE = {
-    "맑음": "오늘 기분이 좋았다면 그 이유를 기록해 보세요. 즐거웠던 순간을 기억하는 데 도움이 됩니다.",
+    "맑음": "기분이 좋았던 이유를 기록해 보세요. 즐거웠던 순간을 기억하는 데 도움이 됩니다.",
     "무지개": "여러 감정이 함께 느껴졌을 수 있어요. 기뻤던 점과 아쉬웠던 점을 나누어 적어 보세요.",
-    "구름 조금": "조금 복잡한 마음이 들었다면 잠깐 쉬면서 지금 느끼는 감정을 살펴보세요.",
+    "구름 조금": "마음이 복잡하다면 잠깐 쉬면서 지금 느끼는 감정을 살펴보세요.",
     "흐림": "기분이 가라앉을 때는 좋아하는 음악을 듣거나 편안한 활동을 해 보세요.",
-    "안개": "감정이 무엇인지 정확히 알기 어려울 수 있어요. '답답하다', '복잡하다'처럼 가까운 단어부터 찾아보세요.",
+    "안개": "감정이 무엇인지 정확히 알기 어렵다면 '답답하다', '복잡하다'처럼 가까운 단어부터 찾아보세요.",
     "비": "속상한 감정도 자연스러운 감정이에요. 믿을 수 있는 사람에게 마음을 이야기해 보세요.",
-    "번개": "감정이 강하게 느껴질 때는 잠시 멈추고 천천히 호흡해 보세요. 안전하고 편안한 장소에서 쉬어도 좋아요.",
+    "번개": "감정이 강하게 느껴질 때는 잠시 멈추고 천천히 호흡해 보세요.",
 }
 
 
 # ==========================================
-# 2. 데이터베이스
+# 2. 데이터베이스 및 기존 DB 자동 수정
 # ==========================================
 
 def get_connection():
@@ -55,8 +55,30 @@ def get_connection():
     return conn
 
 
+def get_columns(conn, table_name):
+    """테이블에 존재하는 열 이름을 반환합니다."""
+    return {
+        row[1]
+        for row in conn.execute(
+            f"PRAGMA table_info({table_name})"
+        ).fetchall()
+    }
+
+
+def ensure_column(conn, table_name, column_name, column_type):
+    """기존 테이블에 없는 열만 추가합니다."""
+    columns = get_columns(conn, table_name)
+
+    if column_name not in columns:
+        conn.execute(
+            f"ALTER TABLE {table_name} "
+            f"ADD COLUMN {column_name} {column_type}"
+        )
+
+
 def init_db():
     with get_connection() as conn:
+        # 사용자 테이블
         conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,33 +88,92 @@ def init_db():
             )
         """)
 
+        # 감정 기록 테이블
         conn.execute("""
             CREATE TABLE IF NOT EXISTS emotion_records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 record_date TEXT NOT NULL,
-                weather TEXT NOT NULL,
-                reason TEXT,
+                weather TEXT NOT NULL DEFAULT '맑음',
+                reason TEXT DEFAULT '',
                 stress INTEGER DEFAULT 3,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(user_id, record_date),
                 FOREIGN KEY(user_id) REFERENCES users(id)
             )
         """)
 
+        # 일기 테이블
         conn.execute("""
             CREATE TABLE IF NOT EXISTS diaries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 diary_date TEXT NOT NULL,
-                title TEXT NOT NULL,
-                content TEXT NOT NULL,
+                title TEXT NOT NULL DEFAULT '',
+                content TEXT NOT NULL DEFAULT '',
                 photo_data BLOB,
                 photo_mime TEXT,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(user_id, diary_date),
                 FOREIGN KEY(user_id) REFERENCES users(id)
             )
+        """)
+
+        # 기존 버전의 테이블에 빠진 열이 있으면 자동 추가
+        emotion_columns = {
+            "record_date": "TEXT",
+            "weather": "TEXT DEFAULT '맑음'",
+            "reason": "TEXT DEFAULT ''",
+            "stress": "INTEGER DEFAULT 3",
+            "created_at": "TEXT",
+        }
+
+        for column, column_type in emotion_columns.items():
+            ensure_column(
+                conn, "emotion_records", column, column_type
+            )
+
+        diary_columns = {
+            "diary_date": "TEXT",
+            "title": "TEXT DEFAULT ''",
+            "content": "TEXT DEFAULT ''",
+            "photo_data": "BLOB",
+            "photo_mime": "TEXT",
+            "updated_at": "TEXT",
+        }
+
+        for column, column_type in diary_columns.items():
+            ensure_column(
+                conn, "diaries", column, column_type
+            )
+
+        # 기존 테이블의 누락된 기본값을 보완
+        conn.execute("""
+            UPDATE emotion_records
+            SET weather = '맑음'
+            WHERE weather IS NULL OR weather = ''
+        """)
+
+        conn.execute("""
+            UPDATE emotion_records
+            SET reason = ''
+            WHERE reason IS NULL
+        """)
+
+        conn.execute("""
+            UPDATE emotion_records
+            SET stress = 3
+            WHERE stress IS NULL
+        """)
+
+        conn.execute("""
+            UPDATE diaries
+            SET title = ''
+            WHERE title IS NULL
+        """)
+
+        conn.execute("""
+            UPDATE diaries
+            SET content = ''
+            WHERE content IS NULL
         """)
 
         conn.commit()
@@ -102,12 +183,8 @@ init_db()
 
 
 # ==========================================
-# 3. 공통 함수
+# 3. 공통 데이터 함수
 # ==========================================
-
-def get_user_id():
-    return st.session_state.get("user_id")
-
 
 def get_emotion_record(user_id, selected_date):
     with get_connection() as conn:
@@ -115,6 +192,8 @@ def get_emotion_record(user_id, selected_date):
             SELECT weather, reason, stress
             FROM emotion_records
             WHERE user_id = ? AND record_date = ?
+            ORDER BY id DESC
+            LIMIT 1
         """, (user_id, selected_date)).fetchone()
 
 
@@ -124,6 +203,8 @@ def get_diary(user_id, selected_date):
             SELECT id, diary_date, title, content, photo_data, photo_mime
             FROM diaries
             WHERE user_id = ? AND diary_date = ?
+            ORDER BY id DESC
+            LIMIT 1
         """, (user_id, selected_date)).fetchone()
 
 
@@ -133,31 +214,56 @@ def get_all_diaries(user_id):
             SELECT id, diary_date, title, content, photo_data, photo_mime
             FROM diaries
             WHERE user_id = ?
-            ORDER BY diary_date DESC
+            ORDER BY diary_date DESC, id DESC
         """, (user_id,)).fetchall()
 
 
-def save_diary(user_id, diary_date, title, content, photo_bytes, photo_mime):
+def save_emotion(user_id, record_date, weather, reason, stress):
+    with get_connection() as conn:
+        existing = conn.execute("""
+            SELECT id FROM emotion_records
+            WHERE user_id = ? AND record_date = ?
+            ORDER BY id DESC
+            LIMIT 1
+        """, (user_id, record_date)).fetchone()
+
+        if existing:
+            conn.execute("""
+                UPDATE emotion_records
+                SET weather = ?, reason = ?, stress = ?
+                WHERE id = ?
+            """, (weather, reason, stress, existing[0]))
+        else:
+            conn.execute("""
+                INSERT INTO emotion_records
+                (user_id, record_date, weather, reason, stress)
+                VALUES (?, ?, ?, ?, ?)
+            """, (user_id, record_date, weather, reason, stress))
+
+        conn.commit()
+
+
+def save_diary(user_id, diary_date, title, content,
+               photo_bytes=None, photo_mime=None):
     existing = get_diary(user_id, diary_date)
 
     with get_connection() as conn:
         if existing:
-            # 새 사진을 올리지 않으면 기존 사진을 유지합니다.
             if photo_bytes is None:
                 conn.execute("""
                     UPDATE diaries
-                    SET title = ?, content = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE user_id = ? AND diary_date = ?
-                """, (title, content, user_id, diary_date))
+                    SET title = ?, content = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (title, content, existing[0]))
             else:
                 conn.execute("""
                     UPDATE diaries
                     SET title = ?, content = ?, photo_data = ?,
                         photo_mime = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE user_id = ? AND diary_date = ?
+                    WHERE id = ?
                 """, (
-                    title, content, photo_bytes, photo_mime,
-                    user_id, diary_date
+                    title, content, photo_bytes, photo_mime, existing[0]
                 ))
         else:
             conn.execute("""
@@ -201,399 +307,304 @@ def delete_diary(user_id, diary_date):
 
 st.markdown("""
 <style>
-    .stApp {
-        background-color: #FFF9F0;
-    }
-
-    h1, h2, h3 {
-        color: #65534A;
-    }
-
-    .subtitle {
-        color: #89776B;
-        font-size: 17px;
-    }
-
-    .weather-card {
-        background-color: #FFFFFF;
-        border: 1px solid #F0E2D3;
-        border-radius: 15px;
-        padding: 18px;
-        margin-bottom: 12px;
-    }
-
-    .diary-card {
-        background-color: #FFFFFF;
-        border: 1px solid #EADBCB;
-        border-radius: 14px;
-        padding: 16px;
-        margin-bottom: 12px;
-    }
-
-    div.stButton > button {
-        border-radius: 10px;
-        border: 1px solid #E8D7C5;
-        background-color: #FFFFFF;
-        color: #65534A;
-    }
-
-    div.stButton > button:hover {
-        background-color: #FCEBD8;
-        border-color: #D8B99A;
-        color: #65534A;
-    }
-
-    [data-testid="stMetric"] {
-        background-color: #FFFFFF;
-        padding: 15px;
-        border-radius: 12px;
-        border: 1px solid #F0E2D3;
-    }
+.stApp {
+    background-color: #FFF9F0;
+}
+h1, h2, h3 {
+    color: #65534A;
+}
+.subtitle {
+    color: #89776B;
+    font-size: 17px;
+}
+.diary-card {
+    background-color: #FFFFFF;
+    border: 1px solid #EADBCB;
+    border-radius: 14px;
+    padding: 16px;
+}
+div.stButton > button {
+    border-radius: 10px;
+    border: 1px solid #E8D7C5;
+    background-color: #FFFFFF;
+    color: #65534A;
+}
+div.stButton > button:hover {
+    background-color: #FCEBD8;
+    border-color: #D8B99A;
+    color: #65534A;
+}
+[data-testid="stMetric"] {
+    background-color: #FFFFFF;
+    padding: 15px;
+    border-radius: 12px;
+    border: 1px solid #F0E2D3;
+}
 </style>
 """, unsafe_allow_html=True)
 
 
 # ==========================================
-# 5. 회원가입 및 로그인
+# 5. 로그인 및 회원가입
 # ==========================================
 
 def show_login_page():
-    st.title("🌦️ 감정날씨 연구소")
-    st.markdown(
-        '<p class="subtitle">오늘의 마음을 날씨처럼 기록해 보세요.</p>',
-        unsafe_allow_html=True
-    )
+    st.title("감정날씨 연구소")
+    st.write("오늘의 마음을 날씨처럼 기록해 보세요.")
 
     tab_login, tab_signup = st.tabs(["로그인", "회원가입"])
 
     with tab_login:
-        st.subheader("다시 만나서 반가워요!")
-
-        login_username = st.text_input(
-            "아이디",
-            key="login_username"
-        )
-        login_password = st.text_input(
-            "비밀번호",
-            type="password",
-            key="login_password"
+        username = st.text_input("아이디", key="login_username")
+        password = st.text_input(
+            "비밀번호", type="password", key="login_password"
         )
 
-        if st.button("로그인", key="login_button", use_container_width=True):
+        if st.button("로그인", use_container_width=True):
             with get_connection() as conn:
                 user = conn.execute("""
                     SELECT id, username, password_hash
-                    FROM users
-                    WHERE username = ?
-                """, (login_username.strip(),)).fetchone()
+                    FROM users WHERE username = ?
+                """, (username.strip(),)).fetchone()
 
-            if user and check_password_hash(user[2], login_password):
+            if user and check_password_hash(user[2], password):
                 st.session_state.user_id = user[0]
                 st.session_state.username = user[1]
+                st.session_state.page = "오늘의 감정 날씨"
                 st.session_state.selected_diary_date = None
                 st.rerun()
             else:
                 st.error("아이디 또는 비밀번호를 확인해 주세요.")
 
     with tab_signup:
-        st.subheader("새 계정 만들기")
-
-        signup_username = st.text_input(
-            "사용할 아이디",
-            key="signup_username"
+        new_username = st.text_input("사용할 아이디", key="signup_username")
+        new_password = st.text_input(
+            "사용할 비밀번호", type="password", key="signup_password"
         )
-        signup_password = st.text_input(
-            "사용할 비밀번호",
-            type="password",
-            key="signup_password"
-        )
-        signup_password_confirm = st.text_input(
-            "비밀번호 확인",
-            type="password",
-            key="signup_password_confirm"
+        confirm_password = st.text_input(
+            "비밀번호 확인", type="password", key="signup_confirm"
         )
 
-        if st.button("회원가입", key="signup_button", use_container_width=True):
-            username = signup_username.strip()
-
-            if not username or not signup_password:
+        if st.button("회원가입", use_container_width=True):
+            if not new_username.strip() or not new_password:
                 st.warning("아이디와 비밀번호를 모두 입력해 주세요.")
-            elif len(username) < 3:
-                st.warning("아이디는 3글자 이상으로 입력해 주세요.")
-            elif len(signup_password) < 4:
-                st.warning("비밀번호는 4글자 이상으로 입력해 주세요.")
-            elif signup_password != signup_password_confirm:
+            elif len(new_username.strip()) < 3:
+                st.warning("아이디는 3글자 이상이어야 합니다.")
+            elif len(new_password) < 4:
+                st.warning("비밀번호는 4글자 이상이어야 합니다.")
+            elif new_password != confirm_password:
                 st.error("비밀번호가 서로 다릅니다.")
             else:
                 try:
-                    hashed = generate_password_hash(signup_password)
-
                     with get_connection() as conn:
                         conn.execute("""
                             INSERT INTO users (username, password_hash)
                             VALUES (?, ?)
-                        """, (username, hashed))
+                        """, (
+                            new_username.strip(),
+                            generate_password_hash(new_password)
+                        ))
                         conn.commit()
 
                     st.success("회원가입이 완료되었습니다. 로그인해 주세요.")
-
                 except sqlite3.IntegrityError:
                     st.error("이미 사용 중인 아이디입니다.")
 
 
 # ==========================================
-# 6. 오늘의 감정 날씨 기록
+# 6. 오늘의 감정 날씨
 # ==========================================
 
 def show_emotion_page(user_id):
-    st.header("☀️ 오늘의 감정 날씨")
+    st.header("오늘의 감정 날씨")
     st.write("오늘 내 마음은 어떤 날씨였나요?")
 
-    selected_date = st.date_input(
-        "기록할 날짜",
-        value=date.today(),
-        key="emotion_date"
-    )
+    selected_date = st.date_input("기록할 날짜", value=date.today())
     date_text = selected_date.isoformat()
 
     existing = get_emotion_record(user_id, date_text)
 
+    weather_list = list(WEATHER_OPTIONS.keys())
     default_weather = existing[0] if existing else "맑음"
     default_reason = existing[1] if existing else ""
-    default_stress = existing[2] if existing else 3
-
-    weather_list = list(WEATHER_OPTIONS.keys())
+    default_stress = int(existing[2] or 3) if existing else 3
 
     weather = st.selectbox(
         "오늘의 감정 날씨",
         weather_list,
         index=weather_list.index(default_weather)
         if default_weather in weather_list else 0,
-        format_func=lambda x: f"{WEATHER_OPTIONS[x]['emoji']} {x}",
-        key=f"weather_{date_text}"
+        format_func=lambda x: f"{WEATHER_OPTIONS[x]['emoji']} {x}"
     )
 
     reason = st.text_area(
         "그렇게 느낀 이유는 무엇인가요?",
         value=default_reason or "",
-        placeholder="오늘 있었던 일이나 마음에 남은 순간을 적어 보세요.",
-        key=f"reason_{date_text}"
+        placeholder="오늘 있었던 일이나 마음에 남은 순간을 적어 보세요."
     )
 
     stress = st.slider(
         "오늘의 스트레스 정도",
         min_value=1,
         max_value=5,
-        value=int(default_stress or 3),
-        help="1은 매우 낮음, 5는 매우 높음입니다.",
-        key=f"stress_{date_text}"
+        value=default_stress
     )
 
-    st.caption("스트레스 정도: 1 매우 낮음 · 2 낮음 · 3 보통 · 4 높음 · 5 매우 높음")
+    st.caption("1 매우 낮음 · 2 낮음 · 3 보통 · 4 높음 · 5 매우 높음")
 
     if st.button("감정 날씨 저장하기", use_container_width=True):
-        with get_connection() as conn:
-            conn.execute("""
-                INSERT INTO emotion_records
-                (user_id, record_date, weather, reason, stress)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(user_id, record_date)
-                DO UPDATE SET
-                    weather = excluded.weather,
-                    reason = excluded.reason,
-                    stress = excluded.stress
-            """, (user_id, date_text, weather, reason, stress))
-            conn.commit()
-
-        st.success("오늘의 감정 날씨를 저장했어요!")
+        save_emotion(user_id, date_text, weather, reason, stress)
+        st.success("감정 날씨를 저장했습니다.")
         st.rerun()
 
     st.divider()
     st.subheader("오늘의 감정 처방")
-
-    st.markdown(
-        f"### {WEATHER_OPTIONS[weather]['emoji']} {weather}"
-    )
+    st.markdown(f"### {WEATHER_OPTIONS[weather]['emoji']} {weather}")
     st.write(EMOTION_ADVICE[weather])
 
 
 # ==========================================
-# 7. 일기 쓰기 및 지난 일기 바로 보기
+# 7. 일기: 지난 일기 선택, 읽기, 수정, 삭제
 # ==========================================
 
 def show_diary_page(user_id):
-    st.header("📔 나의 일기")
-    st.write("오늘 있었던 일과 마음을 자유롭게 기록해 보세요.")
+    st.header("나의 일기")
+    st.write("일기를 작성하고 지난 기록을 다시 읽어 보세요.")
 
     all_diaries = get_all_diaries(user_id)
 
-    # --------------------------------------
-    # 지난 일기 목록
-    # --------------------------------------
-    st.subheader("🗂️ 지난 일기")
-    st.caption("날짜 또는 제목을 누르면 해당 일기의 내용이 바로 열립니다.")
+    st.subheader("지난 일기")
+    st.caption("날짜 또는 제목을 누르면 일기 내용이 바로 열립니다.")
 
     if not all_diaries:
-        st.info("아직 작성한 일기가 없어요. 첫 번째 일기를 작성해 보세요!")
+        st.info("아직 작성한 일기가 없습니다.")
     else:
         for diary in all_diaries:
             diary_id, diary_date, diary_title = diary[0], diary[1], diary[2]
-
             date_col, title_col = st.columns([1, 3])
 
-            # 날짜 버튼을 눌러도 해당 일기가 열립니다.
             with date_col:
                 if st.button(
                     f"📅 {diary_date}",
-                    key=f"open_diary_date_{diary_id}",
+                    key=f"diary_date_{diary_id}",
                     use_container_width=True
                 ):
                     st.session_state.selected_diary_date = diary_date
+                    st.session_state.diary_edit_date = None
                     st.rerun()
 
-            # 제목 버튼을 눌러도 같은 일기가 열립니다.
             with title_col:
                 if st.button(
-                    f"📖 {diary_title}",
-                    key=f"open_diary_title_{diary_id}",
+                    f"📖 {diary_title or '(제목 없음)'}",
+                    key=f"diary_title_{diary_id}",
                     use_container_width=True
                 ):
                     st.session_state.selected_diary_date = diary_date
+                    st.session_state.diary_edit_date = None
                     st.rerun()
 
-    # --------------------------------------
-    # 선택한 지난 일기 표시
-    # --------------------------------------
+    # 선택한 일기 표시
     selected_date = st.session_state.get("selected_diary_date")
+    selected = get_diary(user_id, selected_date) if selected_date else None
 
-    if selected_date:
-        selected_diary = get_diary(user_id, selected_date)
+    if selected:
+        st.divider()
+        st.subheader("선택한 일기")
+        st.markdown(f"### {selected[2]}")
+        st.caption(f"작성 날짜: {selected[1]}")
+        st.markdown(
+            '<div class="diary-card">',
+            unsafe_allow_html=True
+        )
+        st.write(selected[3])
+        st.markdown("</div>", unsafe_allow_html=True)
 
-        if selected_diary:
-            st.divider()
-            st.subheader("📖 선택한 일기")
+        if selected[4]:
+            img_col, _ = st.columns([1, 2])
+            with img_col:
+                st.image(
+                    selected[4],
+                    width=DIARY_PHOTO_WIDTH,
+                    caption="첨부 사진"
+                )
 
-            st.markdown(
-                f"### {selected_diary[2]}"
-            )
-            st.caption(f"작성 날짜: {selected_diary[1]}")
+        c1, c2, c3 = st.columns(3)
 
-            st.markdown(
-                '<div class="diary-card">',
-                unsafe_allow_html=True
-            )
-            st.write(selected_diary[3])
-            st.markdown("</div>", unsafe_allow_html=True)
+        with c1:
+            if st.button("닫기", key="close_diary", use_container_width=True):
+                st.session_state.selected_diary_date = None
+                st.rerun()
 
-            # 선택한 일기에 사진이 있으면 함께 표시합니다.
-            if selected_diary[4]:
-                image_col, _ = st.columns([1, 2])
-                with image_col:
-                    st.image(
-                        selected_diary[4],
-                        width=DIARY_PHOTO_WIDTH,
-                        caption="일기에 첨부한 사진"
-                    )
+        with c2:
+            if st.button("수정하기", key="edit_diary", use_container_width=True):
+                st.session_state.diary_edit_date = selected[1]
+                st.rerun()
 
-            close_col, edit_col, delete_col = st.columns(3)
+        with c3:
+            if st.button("삭제하기", key="delete_diary", use_container_width=True):
+                st.session_state.confirm_delete_diary = selected[1]
+                st.rerun()
 
-            with close_col:
-                if st.button(
-                    "닫기",
-                    key="close_selected_diary",
-                    use_container_width=True
-                ):
-                    st.session_state.selected_diary_date = None
-                    st.rerun()
-
-            with edit_col:
-                if st.button(
-                    "이 일기 수정하기",
-                    key="edit_selected_diary",
-                    use_container_width=True
-                ):
-                    st.session_state.diary_edit_date = selected_date
-                    st.session_state.diary_form_date = date.fromisoformat(
-                        selected_date
-                    )
-                    st.rerun()
-
-            with delete_col:
-                if st.button(
-                    "이 일기 삭제하기",
-                    key="delete_selected_diary",
-                    use_container_width=True
-                ):
-                    st.session_state.confirm_delete_diary = selected_date
-                    st.rerun()
-
-    # 삭제 확인은 실수로 기록을 지우는 것을 방지합니다.
-    confirm_delete = st.session_state.get("confirm_delete_diary")
-
-    if confirm_delete:
-        st.warning(f"{confirm_delete} 일기를 정말 삭제할까요?")
+    # 삭제 확인
+    confirm_date = st.session_state.get("confirm_delete_diary")
+    if confirm_date:
+        st.warning(f"{confirm_date} 일기를 삭제할까요?")
         yes_col, no_col = st.columns(2)
 
         with yes_col:
-            if st.button("삭제하기", key="confirm_delete_yes"):
-                delete_diary(user_id, confirm_delete)
+            if st.button("삭제 확인", key="delete_yes"):
+                delete_diary(user_id, confirm_date)
                 st.session_state.confirm_delete_diary = None
                 st.success("일기를 삭제했습니다.")
                 st.rerun()
 
         with no_col:
-            if st.button("취소", key="confirm_delete_no"):
+            if st.button("삭제 취소", key="delete_no"):
                 st.session_state.confirm_delete_diary = None
                 st.rerun()
 
     st.divider()
 
-    # --------------------------------------
-    # 새 일기 작성 또는 기존 일기 수정
-    # --------------------------------------
+    # 새 일기 또는 수정할 일기 불러오기
     edit_date = st.session_state.get("diary_edit_date")
 
     if edit_date:
-        st.subheader("✏️ 일기 수정하기")
-        initial_date = date.fromisoformat(edit_date)
-        existing = get_diary(user_id, edit_date)
+        st.subheader("일기 수정하기")
+        form_date = date.fromisoformat(edit_date)
     else:
-        st.subheader("✍️ 새 일기 쓰기")
-        initial_date = st.session_state.get(
-            "diary_form_date", date.today()
-        )
-        existing = get_diary(user_id, initial_date.isoformat())
+        st.subheader("새 일기 쓰기")
+        form_date = date.today()
 
+    existing = get_diary(user_id, form_date.isoformat())
+
+    # 수정할 일기 또는 새 일기 입력
     with st.form("diary_form", clear_on_submit=False):
         diary_date = st.date_input(
             "일기 날짜",
-            value=initial_date,
-            key="diary_input_date"
+            value=form_date,
+            key=f"diary_date_input_{form_date.isoformat()}"
         )
-
-        default_title = existing[2] if existing else ""
-        default_content = existing[3] if existing else ""
 
         title = st.text_input(
             "일기 제목",
-            value=default_title,
+            value=existing[2] if existing else "",
             placeholder="예: 오늘 있었던 특별한 일",
-            key=f"diary_title_{initial_date.isoformat()}"
+            key=f"diary_title_input_{form_date.isoformat()}"
         )
 
         content = st.text_area(
             "일기 내용",
-            value=default_content,
+            value=existing[3] if existing else "",
             height=200,
-            placeholder="오늘 있었던 일, 느낀 감정, 기억하고 싶은 순간을 적어 보세요.",
-            key=f"diary_content_{initial_date.isoformat()}"
+            placeholder="오늘 있었던 일과 느낀 감정을 적어 보세요.",
+            key=f"diary_content_input_{form_date.isoformat()}"
         )
 
         uploaded_photo = st.file_uploader(
             "사진 첨부하기 (선택)",
             type=["jpg", "jpeg", "png", "webp"],
-            help="사진은 최대 5MB까지 첨부할 수 있습니다.",
-            key=f"diary_photo_{initial_date.isoformat()}"
+            help="최대 5MB",
+            key=f"diary_upload_{form_date.isoformat()}"
         )
 
         submitted = st.form_submit_button(
@@ -601,25 +612,20 @@ def show_diary_page(user_id):
             use_container_width=True
         )
 
-    # 현재 저장된 사진 표시
     if existing and existing[4]:
         st.caption("현재 저장된 사진")
-        image_col, _ = st.columns([1, 2])
-        with image_col:
-            st.image(
-                existing[4],
-                width=DIARY_PHOTO_WIDTH
-            )
+        img_col, _ = st.columns([1, 2])
+        with img_col:
+            st.image(existing[4], width=DIARY_PHOTO_WIDTH)
 
         if st.button(
             "현재 사진 삭제하기",
-            key=f"remove_photo_{initial_date.isoformat()}"
+            key=f"remove_photo_{form_date.isoformat()}"
         ):
-            delete_diary_photo(user_id, initial_date.isoformat())
+            delete_diary_photo(user_id, form_date.isoformat())
             st.success("사진을 삭제했습니다.")
             st.rerun()
 
-    # 업로드한 사진 미리 보기
     photo_bytes = None
     photo_mime = None
 
@@ -628,25 +634,20 @@ def show_diary_page(user_id):
         photo_mime = uploaded_photo.type
 
         if len(photo_bytes) > MAX_PHOTO_SIZE:
-            st.error("사진 크기가 5MB를 초과합니다. 더 작은 사진을 선택해 주세요.")
-            photo_bytes = None
-            photo_mime = None
+            st.error("사진 크기는 5MB 이하여야 합니다.")
         else:
             st.caption("업로드한 사진 미리 보기")
-            image_col, _ = st.columns([1, 2])
-            with image_col:
-                st.image(
-                    photo_bytes,
-                    width=DIARY_PHOTO_WIDTH
-                )
+            img_col, _ = st.columns([1, 2])
+            with img_col:
+                st.image(photo_bytes, width=DIARY_PHOTO_WIDTH)
 
     if submitted:
         if not title.strip():
             st.warning("일기 제목을 입력해 주세요.")
         elif not content.strip():
             st.warning("일기 내용을 입력해 주세요.")
-        elif uploaded_photo is not None and len(uploaded_photo.getvalue()) > MAX_PHOTO_SIZE:
-            st.error("사진 크기가 5MB를 초과합니다.")
+        elif uploaded_photo and len(uploaded_photo.getvalue()) > MAX_PHOTO_SIZE:
+            st.error("사진 크기는 5MB 이하여야 합니다.")
         else:
             save_diary(
                 user_id,
@@ -656,18 +657,14 @@ def show_diary_page(user_id):
                 photo_bytes,
                 photo_mime
             )
-
             st.session_state.selected_diary_date = diary_date.isoformat()
             st.session_state.diary_edit_date = None
-            st.session_state.diary_form_date = date.today()
-
             st.success("일기를 저장했습니다.")
             st.rerun()
 
     if edit_date:
-        if st.button("수정 취소", key="cancel_diary_edit"):
+        if st.button("수정 취소", key="cancel_edit_diary"):
             st.session_state.diary_edit_date = None
-            st.session_state.diary_form_date = date.today()
             st.rerun()
 
 
@@ -676,88 +673,77 @@ def show_diary_page(user_id):
 # ==========================================
 
 def show_calendar_page(user_id):
-    st.header("🗓️ 감정 달력")
-    st.write("날짜별 감정과 일기를 한눈에 확인할 수 있어요.")
+    st.header("감정 달력")
+    st.write("날짜별 감정과 일기를 확인해 보세요.")
 
     today = date.today()
+    c1, c2 = st.columns(2)
 
-    year_col, month_col = st.columns(2)
-
-    with year_col:
+    with c1:
         year = st.selectbox(
             "연도",
-            list(range(today.year - 5, today.year + 2)),
+            list(range(today.year - 5, today.year + 1)),
             index=5
         )
 
-    with month_col:
+    with c2:
         month = st.selectbox(
-            "월",
-            list(range(1, 13)),
-            index=today.month - 1
+            "월", list(range(1, 13)), index=today.month - 1
         )
+
+    month_text = f"{year:04d}-{month:02d}"
 
     with get_connection() as conn:
         emotion_rows = conn.execute("""
             SELECT record_date, weather
             FROM emotion_records
-            WHERE user_id = ?
-            AND substr(record_date, 1, 7) = ?
-        """, (user_id, f"{year:04d}-{month:02d}")).fetchall()
+            WHERE user_id = ? AND substr(record_date, 1, 7) = ?
+            ORDER BY id
+        """, (user_id, month_text)).fetchall()
 
         diary_rows = conn.execute("""
             SELECT diary_date, title, content, photo_data
             FROM diaries
-            WHERE user_id = ?
-            AND substr(diary_date, 1, 7) = ?
-        """, (user_id, f"{year:04d}-{month:02d}")).fetchall()
+            WHERE user_id = ? AND substr(diary_date, 1, 7) = ?
+            ORDER BY id
+        """, (user_id, month_text)).fetchall()
 
     emotions = {row[0]: row[1] for row in emotion_rows}
     diaries = {row[0]: row for row in diary_rows}
 
-    cal = calendar.Calendar(firstweekday=6)
-    weeks = cal.monthdayscalendar(year, month)
+    weeks = calendar.Calendar(firstweekday=6).monthdayscalendar(year, month)
 
-    cols = st.columns(7)
-    for col, name in zip(cols, ["일", "월", "화", "수", "목", "금", "토"]):
-        col.markdown(f"**{name}**")
+    header = st.columns(7)
+    for col, day_name in zip(header, ["일", "월", "화", "수", "목", "금", "토"]):
+        col.markdown(f"**{day_name}**")
 
     for week in weeks:
         cols = st.columns(7)
 
-        for col, day in zip(cols, week):
+        for col, day_num in zip(cols, week):
             with col:
-                if day == 0:
+                if day_num == 0:
                     st.write(" ")
                     continue
 
-                day_date = date(year, month, day).isoformat()
-                weather = emotions.get(day_date)
-                diary = diaries.get(day_date)
+                day_text = date(year, month, day_num).isoformat()
+                st.markdown(f"**{day_num}일**")
 
-                label = f"**{day}**"
-
+                weather = emotions.get(day_text)
                 if weather:
                     emoji = WEATHER_OPTIONS.get(
                         weather, {"emoji": "🌦️"}
                     )["emoji"]
-                    label += f"\n{emoji}"
+                    st.write(f"{emoji} {weather}")
 
-                if diary:
-                    label += "\n📔"
-
-                st.markdown(label)
-
-                if weather:
-                    st.caption(weather)
-
+                diary = diaries.get(day_text)
                 if diary:
                     if st.button(
                         "일기 보기",
-                        key=f"calendar_diary_{day_date}",
+                        key=f"calendar_open_{day_text}",
                         use_container_width=True
                     ):
-                        st.session_state.selected_diary_date = day_date
+                        st.session_state.selected_diary_date = day_text
                         st.session_state.page = "나의 일기"
                         st.rerun()
 
@@ -767,8 +753,7 @@ def show_calendar_page(user_id):
                             width=CALENDAR_PHOTO_WIDTH
                         )
 
-    st.caption("☀️ 맑음 · 🌈 무지개 · 🌤️ 구름 조금 · ☁️ 흐림 · 🌫️ 안개 · 🌧️ 비 · ⛈️ 번개")
-    st.caption("📔 표시가 있는 날짜에는 일기가 저장되어 있습니다.")
+    st.caption("📔 버튼이 표시된 날짜에는 일기가 있습니다.")
 
 
 # ==========================================
@@ -776,8 +761,8 @@ def show_calendar_page(user_id):
 # ==========================================
 
 def show_expression_page():
-    st.header("💬 감정 표현 연습")
-    st.write("감정을 구체적인 말로 표현하는 연습을 해 보세요.")
+    st.header("감정 표현 연습")
+    st.write("내 감정을 구체적인 말로 표현해 보세요.")
 
     situations = {
         "친구가 약속을 지키지 않았을 때": [
@@ -799,23 +784,22 @@ def show_expression_page():
         "도움이 필요할 때": [
             "지금 혼자 해결하기 어려워.",
             "이 부분을 함께 살펴봐 줄 수 있어?"
-        ],
+        ]
     }
 
     situation = st.selectbox("상황 선택하기", list(situations.keys()))
 
-    st.subheader("이렇게 표현해 볼 수 있어요")
+    st.subheader("표현 예시")
     for sentence in situations[situation]:
         st.info(sentence)
 
-    st.subheader("나만의 표현 만들기")
-    my_expression = st.text_area(
-        "내 감정을 담아 문장을 만들어 보세요.",
+    expression = st.text_area(
+        "나만의 문장 만들기",
         placeholder="나는 ______해서 ______한 기분이 들었어."
     )
 
-    if my_expression.strip():
-        st.success("좋아요. 내 감정을 구체적인 말로 표현해 보았어요.")
+    if expression.strip():
+        st.success("감정을 문장으로 표현해 보았어요.")
 
 
 # ==========================================
@@ -823,40 +807,56 @@ def show_expression_page():
 # ==========================================
 
 def show_analysis_page(user_id):
-    st.header("📊 감정 변화 분석")
-    st.write("기록한 감정 날씨와 스트레스 정도의 변화를 살펴보세요.")
+    st.header("감정 변화 분석")
+    st.write("감정 점수와 스트레스의 변화를 비교해 보세요.")
 
     with get_connection() as conn:
         rows = conn.execute("""
             SELECT record_date, weather, stress, reason
             FROM emotion_records
             WHERE user_id = ?
-            ORDER BY record_date
+            ORDER BY record_date, id
         """, (user_id,)).fetchall()
 
     if not rows:
-        st.info("분석할 기록이 아직 없어요. 감정 날씨를 먼저 기록해 보세요.")
+        st.info("분석할 기록이 없습니다. 감정 날씨를 먼저 기록해 보세요.")
         return
 
     df = pd.DataFrame(
-        rows,
-        columns=["날짜", "감정 날씨", "스트레스", "이유"]
+        rows, columns=["날짜", "감정 날씨", "스트레스", "이유"]
     )
 
-    df["날짜"] = pd.to_datetime(df["날짜"])
+    df["날짜"] = pd.to_datetime(df["날짜"], errors="coerce")
+    df = df.dropna(subset=["날짜"])
     df["감정 점수"] = df["감정 날씨"].map(
         lambda x: WEATHER_OPTIONS.get(x, {"score": 3})["score"]
     )
+    df["스트레스"] = pd.to_numeric(
+        df["스트레스"], errors="coerce"
+    ).fillna(3)
+
+    if df.empty:
+        st.info("날짜가 올바른 기록이 없습니다.")
+        return
 
     min_date = df["날짜"].min().date()
     max_date = df["날짜"].max().date()
 
-    start_date, end_date = st.date_input(
-        "분석 기간",
-        value=(min_date, max_date),
-        min_value=min_date,
-        max_value=max_date
-    ) if min_date != max_date else (min_date, max_date)
+    if min_date == max_date:
+        start_date, end_date = min_date, max_date
+    else:
+        date_range = st.date_input(
+            "분석 기간",
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date
+        )
+
+        if not isinstance(date_range, (tuple, list)) or len(date_range) != 2:
+            st.info("시작일과 종료일을 모두 선택해 주세요.")
+            return
+
+        start_date, end_date = date_range
 
     filtered = df[
         (df["날짜"].dt.date >= start_date)
@@ -867,14 +867,10 @@ def show_analysis_page(user_id):
         st.info("선택한 기간에 기록이 없습니다.")
         return
 
-    average_emotion = filtered["감정 점수"].mean()
-    average_stress = filtered["스트레스"].mean()
-
-    metric1, metric2, metric3 = st.columns(3)
-
-    metric1.metric("기록한 날", f"{len(filtered)}일")
-    metric2.metric("평균 감정 점수", f"{average_emotion:.1f} / 5")
-    metric3.metric("평균 스트레스", f"{average_stress:.1f} / 5")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("기록한 날", f"{filtered['날짜'].nunique()}일")
+    c2.metric("평균 감정 점수", f"{filtered['감정 점수'].mean():.1f} / 5")
+    c3.metric("평균 스트레스", f"{filtered['스트레스'].mean():.1f} / 5")
 
     fig = go.Figure()
 
@@ -882,9 +878,7 @@ def show_analysis_page(user_id):
         x=filtered["날짜"],
         y=filtered["감정 점수"],
         mode="lines+markers",
-        name="감정 점수",
-        line=dict(width=3),
-        hovertemplate="%{x|%Y-%m-%d}<br>감정 점수: %{y}<extra></extra>"
+        name="감정 점수"
     ))
 
     fig.add_trace(go.Scatter(
@@ -892,24 +886,22 @@ def show_analysis_page(user_id):
         y=filtered["스트레스"],
         mode="lines+markers",
         name="스트레스",
-        line=dict(width=3, dash="dash"),
-        hovertemplate="%{x|%Y-%m-%d}<br>스트레스: %{y}<extra></extra>"
+        line=dict(dash="dash")
     ))
 
     fig.update_layout(
-        title="날짜별 감정과 스트레스 변화",
+        title="감정과 스트레스 변화",
         xaxis_title="날짜",
         yaxis_title="점수 (1~5)",
         yaxis=dict(range=[0, 5.5], dtick=1),
         hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
         plot_bgcolor="#FFFFFF",
         paper_bgcolor="#FFF9F0"
     )
 
     st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader("기록 돌아보기")
+    st.subheader("기록 목록")
     st.dataframe(
         filtered[["날짜", "감정 날씨", "감정 점수", "스트레스", "이유"]],
         use_container_width=True,
@@ -917,155 +909,143 @@ def show_analysis_page(user_id):
     )
 
     st.caption(
-        "감정 점수는 기록한 감정 날씨를 바탕으로 만든 간단한 지표입니다. "
-        "감정이나 스트레스의 원인을 확정적으로 판단하는 자료는 아닙니다."
+        "감정 점수는 기록한 감정 날씨에 부여한 참고용 점수이며, "
+        "심리 상태를 진단하는 지표는 아닙니다."
     )
 
 
 # ==========================================
-# 11. 월간 감정 연구 보고서
+# 11. 월간 감정 보고서
 # ==========================================
 
 def show_monthly_report(user_id):
-    st.header("🔎 월간 감정 연구 보고서")
-    st.write("한 달 동안의 감정 기록을 요약해 보세요.")
+    st.header("월간 감정 연구 보고서")
 
     today = date.today()
+    c1, c2 = st.columns(2)
 
-    col1, col2 = st.columns(2)
-
-    with col1:
+    with c1:
         year = st.selectbox(
-            "보고서 연도",
+            "연도",
             list(range(today.year - 5, today.year + 1)),
             index=5,
-            key="report_year"
+            key="monthly_year"
         )
 
-    with col2:
+    with c2:
         month = st.selectbox(
-            "보고서 월",
-            list(range(1, 13)),
+            "월", list(range(1, 13)),
             index=today.month - 1,
-            key="report_month"
+            key="monthly_month"
         )
+
+    month_text = f"{year:04d}-{month:02d}"
 
     with get_connection() as conn:
         rows = conn.execute("""
             SELECT record_date, weather, reason, stress
             FROM emotion_records
-            WHERE user_id = ?
-            AND substr(record_date, 1, 7) = ?
+            WHERE user_id = ? AND substr(record_date, 1, 7) = ?
             ORDER BY record_date
-        """, (user_id, f"{year:04d}-{month:02d}")).fetchall()
+        """, (user_id, month_text)).fetchall()
 
         diary_count = conn.execute("""
             SELECT COUNT(*)
             FROM diaries
-            WHERE user_id = ?
-            AND substr(diary_date, 1, 7) = ?
-        """, (user_id, f"{year:04d}-{month:02d}")).fetchone()[0]
-
-    if not rows and diary_count == 0:
-        st.info("선택한 달에는 아직 기록이 없습니다.")
-        return
+            WHERE user_id = ? AND substr(diary_date, 1, 7) = ?
+        """, (user_id, month_text)).fetchone()[0]
 
     df = pd.DataFrame(
-        rows,
-        columns=["날짜", "감정 날씨", "이유", "스트레스"]
+        rows, columns=["날짜", "감정 날씨", "이유", "스트레스"]
     )
 
-    st.subheader(f"📅 {year}년 {month}월 기록 요약")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("감정 기록", f"{len(df)}일")
+    c2.metric("작성한 일기", f"{diary_count}개")
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("감정 기록", f"{len(df)}일")
-    col2.metric("작성한 일기", f"{diary_count}개")
+    if df.empty:
+        c3.metric("평균 스트레스", "-")
+        st.info("해당 월에 감정 기록이 없습니다.")
+        return
 
-    if not df.empty:
-        col3.metric("평균 스트레스", f"{df['스트레스'].mean():.1f} / 5")
+    df["스트레스"] = pd.to_numeric(
+        df["스트레스"], errors="coerce"
+    ).fillna(3)
+    c3.metric("평균 스트레스", f"{df['스트레스'].mean():.1f} / 5")
 
-        weather_counts = df["감정 날씨"].value_counts()
-        most_common = weather_counts.index[0]
+    counts = df["감정 날씨"].value_counts()
+    most_common = counts.index[0]
 
-        st.markdown("### 가장 자주 기록한 감정 날씨")
-        st.write(
-            f"{WEATHER_OPTIONS[most_common]['emoji']} **{most_common}** "
-            f"({int(weather_counts.iloc[0])}회)"
-        )
+    st.subheader("가장 자주 기록한 감정 날씨")
+    st.write(
+        f"{WEATHER_OPTIONS.get(most_common, {'emoji': '🌦️'})['emoji']} "
+        f"**{most_common}** ({int(counts.iloc[0])}회)"
+    )
 
-        fig = go.Figure(data=[
-            go.Bar(
-                x=weather_counts.index,
-                y=weather_counts.values,
-                text=weather_counts.values,
-                textposition="auto"
-            )
-        ])
+    fig = go.Figure(go.Bar(
+        x=counts.index,
+        y=counts.values,
+        text=counts.values,
+        textposition="auto"
+    ))
 
-        fig.update_layout(
-            title="감정 날씨별 기록 횟수",
-            xaxis_title="감정 날씨",
-            yaxis_title="기록 횟수",
-            plot_bgcolor="#FFFFFF",
-            paper_bgcolor="#FFF9F0"
-        )
+    fig.update_layout(
+        title="감정 날씨별 기록 횟수",
+        xaxis_title="감정 날씨",
+        yaxis_title="기록 횟수",
+        plot_bgcolor="#FFFFFF",
+        paper_bgcolor="#FFF9F0"
+    )
 
-        st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True)
 
-        st.markdown("### 이번 달 기록")
-        st.dataframe(df, use_container_width=True, hide_index=True)
+    st.subheader("이번 달 기록")
+    st.dataframe(df, use_container_width=True, hide_index=True)
 
-        st.markdown("### 스스로 돌아볼 질문")
-        st.write("- 이번 달에 가장 자주 느낀 감정은 무엇이었나요?")
-        st.write("- 기분이 좋아졌던 날에는 어떤 일이 있었나요?")
-        st.write("- 스트레스가 높았던 날에 나에게 도움이 된 것은 무엇이었나요?")
-        st.write("- 다음 달에는 어떤 감정 표현을 연습해 보고 싶나요?")
+    st.subheader("스스로 돌아볼 질문")
+    st.write("- 이번 달에 가장 자주 느낀 감정은 무엇이었나요?")
+    st.write("- 기분이 좋아졌던 날에는 어떤 일이 있었나요?")
+    st.write("- 스트레스가 높았던 날 나에게 도움이 된 것은 무엇인가요?")
+    st.write("- 다음 달에는 어떤 감정 표현을 연습하고 싶나요?")
 
 
 # ==========================================
-# 12. 메인 화면 및 메뉴
+# 12. 메인 화면
 # ==========================================
 
 def show_main_app():
-    user_id = get_user_id()
+    user_id = st.session_state.user_id
 
-    st.title("🌦️ 감정날씨 연구소")
+    st.title("감정날씨 연구소")
     st.markdown(
         '<p class="subtitle">내 마음을 관찰하고 기록하는 작은 연구소</p>',
         unsafe_allow_html=True
     )
 
+    pages = [
+        "오늘의 감정 날씨",
+        "나의 일기",
+        "감정 달력",
+        "감정 표현 연습",
+        "감정 변화 분석",
+        "월간 감정 보고서"
+    ]
+
     with st.sidebar:
-        st.markdown("## 🌷 메뉴")
+        st.markdown("## 메뉴")
         st.write(f"로그인 계정: **{st.session_state.username}**")
+
+        current_page = st.session_state.get(
+            "page", "오늘의 감정 날씨"
+        )
+
+        if current_page not in pages:
+            current_page = pages[0]
 
         page = st.radio(
             "이동할 메뉴",
-            [
-                "오늘의 감정 날씨",
-                "나의 일기",
-                "감정 달력",
-                "감정 표현 연습",
-                "감정 변화 분석",
-                "월간 감정 보고서",
-            ],
-            key="main_menu",
-            index=[
-                "오늘의 감정 날씨",
-                "나의 일기",
-                "감정 달력",
-                "감정 표현 연습",
-                "감정 변화 분석",
-                "월간 감정 보고서",
-            ].index(st.session_state.get("page", "오늘의 감정 날씨"))
-            if st.session_state.get("page", "오늘의 감정 날씨") in [
-                "오늘의 감정 날씨",
-                "나의 일기",
-                "감정 달력",
-                "감정 표현 연습",
-                "감정 변화 분석",
-                "월간 감정 보고서",
-            ] else 0
+            pages,
+            index=pages.index(current_page)
         )
 
         st.session_state.page = page
