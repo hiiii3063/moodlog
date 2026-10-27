@@ -1,13 +1,12 @@
 
 # ==========================================
 # 감정날씨 연구소
-# 아동·청소년을 위한 감정 기록 및 분석 앱
+# 감정 기록 + 일반 일기 + 사진 첨부
 # 파일명: main.py
 # ==========================================
 
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.graph_objects as go
 import sqlite3
 import calendar
@@ -28,9 +27,12 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 데이터베이스 파일 이름
-# 참고: Streamlit Cloud의 로컬 파일은 영구 저장이 보장되지 않음
+# 데이터베이스 파일
+# 주의: Streamlit Cloud의 로컬 파일은 영구 저장이 보장되지 않음
 DB_PATH = os.environ.get("DB_PATH", "emotion_weather.db")
+
+# 사진 한 장의 최대 업로드 크기: 5MB
+MAX_PHOTO_SIZE = 5 * 1024 * 1024
 
 
 # ------------------------------------------
@@ -62,7 +64,6 @@ st.markdown("""
 
     div.stButton > button:hover {
         background-color: #F0C68C;
-        border-color: #DFA96C;
         color: #4D3827;
     }
 
@@ -80,11 +81,6 @@ st.markdown("""
         margin-bottom: 18px;
     }
 
-    .small-note {
-        color: #806F61;
-        font-size: 14px;
-    }
-
     .calendar-cell {
         background-color: #FFFFFF;
         border: 1px solid #F0E2D2;
@@ -93,15 +89,6 @@ st.markdown("""
         min-height: 72px;
         text-align: center;
         margin-bottom: 5px;
-    }
-
-    .calendar-day {
-        font-size: 14px;
-        color: #665448;
-    }
-
-    .calendar-weather {
-        font-size: 22px;
     }
 
     .calendar-empty {
@@ -115,11 +102,9 @@ st.markdown("""
 
 
 # ------------------------------------------
-# 3. 감정 종류와 감정별 추천 활동
+# 3. 감정 종류와 추천 활동
 # ------------------------------------------
 
-# 감정 점수는 감정의 좋고 나쁨을 판단하는 점수가 아니라
-# 그래프에서 감정의 변화를 살펴보기 위한 참고용 숫자임
 EMOTIONS = {
     "맑음": {
         "emoji": "☀️",
@@ -158,7 +143,6 @@ EMOTIONS = {
     }
 }
 
-# 감정에 따라 실천해 볼 수 있는 활동
 ADVICE = {
     "맑음": [
         "오늘 기분이 좋았던 이유를 한 가지 적어 보기",
@@ -203,16 +187,16 @@ ADVICE = {
 # ------------------------------------------
 
 def get_connection():
-    """데이터베이스에 연결하는 함수"""
+    """데이터베이스에 연결"""
     return sqlite3.connect(DB_PATH)
 
 
 def init_database():
-    """사용자 정보와 감정 기록을 저장할 표를 만듦"""
+    """계정, 감정 기록, 일반 일기 표를 만듦"""
     with get_connection() as conn:
         cursor = conn.cursor()
 
-        # 사용자 계정 표
+        # 사용자 계정
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -222,8 +206,7 @@ def init_database():
             )
         """)
 
-        # 감정 기록 표
-        # 한 사용자는 하루에 하나의 기록을 저장함
+        # 감정 날씨 기록
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS emotion_records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -234,6 +217,23 @@ def init_database():
                 stress INTEGER NOT NULL,
                 FOREIGN KEY (user_id) REFERENCES users(id),
                 UNIQUE(user_id, record_date)
+            )
+        """)
+
+        # 일반 일기
+        # 사진은 파일 경로가 아닌 데이터 자체를 저장함
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS diaries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                diary_date TEXT NOT NULL,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                photo_data BLOB,
+                photo_mime TEXT,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                UNIQUE(user_id, diary_date)
             )
         """)
 
@@ -248,7 +248,7 @@ init_database()
 # ------------------------------------------
 
 def create_account(username, password):
-    """새 계정을 만들고 비밀번호는 해시로 저장함"""
+    """새 계정을 만들고 비밀번호를 해시로 저장"""
     username = username.strip()
 
     if len(username) < 3 or len(username) > 20:
@@ -260,7 +260,6 @@ def create_account(username, password):
     if len(password) < 8:
         return False, "비밀번호는 8자 이상으로 설정해 주세요."
 
-    # 비밀번호 원문 대신 해시값을 데이터베이스에 저장
     password_hash = generate_password_hash(password)
 
     try:
@@ -283,7 +282,7 @@ def create_account(username, password):
 
 
 def login_account(username, password):
-    """아이디와 비밀번호를 확인함"""
+    """아이디와 비밀번호 확인"""
     with get_connection() as conn:
         row = conn.execute("""
             SELECT id, password_hash
@@ -297,7 +296,7 @@ def login_account(username, password):
     return None
 
 
-# 앱을 새로고침해도 현재 로그인 상태를 유지하도록 설정
+# 로그인 상태 유지
 if "user_id" not in st.session_state:
     st.session_state.user_id = None
 
@@ -310,7 +309,7 @@ if "username" not in st.session_state:
 # ------------------------------------------
 
 def save_record(user_id, record_date, emotion, reason, stress):
-    """감정 기록을 저장함. 같은 날짜의 기록은 수정함"""
+    """같은 날짜에 기록이 있으면 수정하고 없으면 새로 저장"""
     with get_connection() as conn:
         conn.execute("""
             INSERT INTO emotion_records
@@ -332,7 +331,7 @@ def save_record(user_id, record_date, emotion, reason, stress):
 
 
 def load_records(user_id):
-    """로그인한 사용자의 감정 기록만 불러옴"""
+    """로그인한 사용자의 감정 기록만 불러오기"""
     with get_connection() as conn:
         df = pd.read_sql_query("""
             SELECT record_date, emotion, reason, stress
@@ -352,7 +351,7 @@ def load_records(user_id):
 
 
 def delete_record(user_id, record_date):
-    """선택한 날짜의 기록을 삭제함"""
+    """감정 기록 삭제"""
     with get_connection() as conn:
         conn.execute("""
             DELETE FROM emotion_records
@@ -362,7 +361,110 @@ def delete_record(user_id, record_date):
 
 
 # ------------------------------------------
-# 7. 로그인하지 않았을 때 보여 줄 화면
+# 7. 일반 일기: 저장, 불러오기, 삭제
+# ------------------------------------------
+
+def load_diary(user_id, diary_date):
+    """선택한 날짜의 일기를 불러오기"""
+    with get_connection() as conn:
+        row = conn.execute("""
+            SELECT title, content, photo_data, photo_mime, updated_at
+            FROM diaries
+            WHERE user_id = ? AND diary_date = ?
+        """, (user_id, diary_date.isoformat())).fetchone()
+
+    return row
+
+
+def load_diary_list(user_id):
+    """일기 목록을 날짜순으로 불러오기"""
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT diary_date, title, updated_at,
+                   CASE WHEN photo_data IS NULL THEN 0 ELSE 1 END
+            FROM diaries
+            WHERE user_id = ?
+            ORDER BY diary_date DESC
+        """, (user_id,)).fetchall()
+
+    return rows
+
+
+def save_diary(user_id, diary_date, title, content, uploaded_photo):
+    """
+    일기를 저장함.
+    새 사진을 올리지 않았다면 기존 사진을 유지함.
+    """
+    photo_data = None
+    photo_mime = None
+
+    if uploaded_photo is not None:
+        photo_data = uploaded_photo.getvalue()
+        photo_mime = uploaded_photo.type
+
+        if len(photo_data) > MAX_PHOTO_SIZE:
+            return False, "사진은 한 장당 5MB 이하로 올려 주세요."
+
+    with get_connection() as conn:
+        conn.execute("""
+            INSERT INTO diaries
+            (user_id, diary_date, title, content,
+             photo_data, photo_mime, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, diary_date)
+            DO UPDATE SET
+                title = excluded.title,
+                content = excluded.content,
+                photo_data = COALESCE(
+                    excluded.photo_data, diaries.photo_data
+                ),
+                photo_mime = COALESCE(
+                    excluded.photo_mime, diaries.photo_mime
+                ),
+                updated_at = excluded.updated_at
+        """, (
+            user_id,
+            diary_date.isoformat(),
+            title.strip(),
+            content,
+            photo_data,
+            photo_mime,
+            datetime.now().isoformat(timespec="seconds")
+        ))
+        conn.commit()
+
+    return True, "일기를 저장했어요."
+
+
+def delete_diary(user_id, diary_date):
+    """선택한 날짜의 일기 전체를 삭제"""
+    with get_connection() as conn:
+        conn.execute("""
+            DELETE FROM diaries
+            WHERE user_id = ? AND diary_date = ?
+        """, (user_id, diary_date.isoformat()))
+        conn.commit()
+
+
+def delete_diary_photo(user_id, diary_date):
+    """일기는 유지하고 사진만 삭제"""
+    with get_connection() as conn:
+        conn.execute("""
+            UPDATE diaries
+            SET photo_data = NULL,
+                photo_mime = NULL,
+                updated_at = ?
+            WHERE user_id = ? AND diary_date = ?
+        """, (
+            datetime.now().isoformat(timespec="seconds"),
+            user_id,
+            diary_date.isoformat()
+        ))
+        conn.commit()
+
+
+# ------------------------------------------
+# 8. 로그인 화면
 # ------------------------------------------
 
 def show_login_page():
@@ -370,7 +472,7 @@ def show_login_page():
         "<div class='weather-banner'>"
         "<h1>🌦️ 감정날씨 연구소</h1>"
         "<p>오늘 내 마음에는 어떤 날씨가 찾아왔나요?</p>"
-        "<p>내 감정을 알아보고, 기록하고, 이해해 보는 공간이에요.</p>"
+        "<p>감정도 기록하고, 하루의 이야기도 일기로 남겨 봐요.</p>"
         "</div>",
         unsafe_allow_html=True
     )
@@ -435,35 +537,32 @@ def show_login_page():
                     st.error(message)
 
     st.caption(
-        "이 앱은 감정을 기록하고 이해하기 위한 도구예요. "
-        "감정에 정답은 없어요."
+        "감정에는 정답이 없어요. "
+        "이곳은 내 마음과 하루를 천천히 살펴보는 공간이에요."
     )
 
 
 # ------------------------------------------
-# 8. 오늘의 감정 날씨
+# 9. 오늘의 감정 날씨
 # ------------------------------------------
 
 def show_today_page(df):
     st.header("☀️ 오늘의 감정 날씨")
     st.write("오늘 내 마음을 날씨로 표현해 볼까요?")
 
-    col1, col2 = st.columns([1, 1])
+    col1, col2 = st.columns(2)
 
     with col1:
         record_date = st.date_input(
             "기록할 날짜",
-            value=date.today()
+            value=date.today(),
+            key="emotion_record_date"
         )
-
-        emotion_names = list(EMOTIONS.keys())
 
         selected_emotion = st.selectbox(
             "오늘의 마음 날씨",
-            emotion_names,
-            format_func=lambda x: (
-                f"{EMOTIONS[x]['emoji']} {x}"
-            )
+            list(EMOTIONS.keys()),
+            format_func=lambda x: f"{EMOTIONS[x]['emoji']} {x}"
         )
 
         st.info(EMOTIONS[selected_emotion]["description"])
@@ -512,7 +611,6 @@ def show_today_page(df):
         st.write("- 지금 나에게 필요한 것은 무엇일까?")
         st.write("- 내일의 나에게 어떤 말을 해 주고 싶을까?")
 
-        # 선택한 날짜의 기존 기록이 있다면 표시
         if not df.empty:
             previous = df[
                 df["record_date"].dt.date == record_date
@@ -521,15 +619,13 @@ def show_today_page(df):
             if not previous.empty:
                 old = previous.iloc[0]
                 st.caption(
-                    f"이 날짜에는 이미 "
-                    f"{EMOTIONS[old['emotion']]['emoji']} "
-                    f"{old['emotion']} 기록이 있어요. "
-                    "저장하면 기존 기록이 수정돼요."
+                    f"이 날짜에는 이미 {old['emotion']} 기록이 있어요. "
+                    "저장하면 기존 감정 기록이 수정돼요."
                 )
 
 
 # ------------------------------------------
-# 9. 감정 달력
+# 10. 감정 달력
 # ------------------------------------------
 
 def show_calendar_page(df):
@@ -538,28 +634,25 @@ def show_calendar_page(df):
 
     today = date.today()
 
-    year = st.selectbox(
-        "연도",
-        list(range(today.year - 5, today.year + 1)),
-        index=5
-    )
+    col1, col2 = st.columns(2)
 
-    month = st.selectbox(
-        "월",
-        list(range(1, 13)),
-        index=today.month - 1
-    )
+    with col1:
+        year = st.selectbox(
+            "연도",
+            list(range(today.year - 5, today.year + 1)),
+            index=5,
+            key="calendar_year"
+        )
 
-    # 요일 표시
-    weekday_cols = st.columns(7)
+    with col2:
+        month = st.selectbox(
+            "월",
+            list(range(1, 13)),
+            index=today.month - 1,
+            key="calendar_month"
+        )
 
-    for col, weekday in zip(
-        weekday_cols,
-        ["월", "화", "수", "목", "금", "토", "일"]
-    ):
-        col.markdown(f"**{weekday}**")
-
-    # 날짜와 감정 기록을 연결
+    # 감정 기록을 날짜별로 연결
     record_map = {}
 
     if not df.empty:
@@ -569,9 +662,23 @@ def show_calendar_page(df):
             if d.year == year and d.month == month:
                 record_map[d.day] = row["emotion"]
 
-    month_calendar = calendar.monthcalendar(year, month)
+    # 일반 일기가 있는 날짜 확인
+    diary_dates = {
+        datetime.strptime(row[0], "%Y-%m-%d").date().day
+        for row in load_diary_list(st.session_state.user_id)
+        if datetime.strptime(row[0], "%Y-%m-%d").date().year == year
+        and datetime.strptime(row[0], "%Y-%m-%d").date().month == month
+    }
 
-    for week in month_calendar:
+    weekday_cols = st.columns(7)
+
+    for col, weekday in zip(
+        weekday_cols,
+        ["월", "화", "수", "목", "금", "토", "일"]
+    ):
+        col.markdown(f"**{weekday}**")
+
+    for week in calendar.monthcalendar(year, month):
         cols = st.columns(7)
 
         for col, day_number in zip(cols, week):
@@ -582,72 +689,232 @@ def show_calendar_page(df):
                         unsafe_allow_html=True
                     )
                 else:
-                    if day_number in record_map:
-                        emotion = record_map[day_number]
+                    emotion = record_map.get(day_number)
+
+                    if emotion:
                         emoji = EMOTIONS[emotion]["emoji"]
-
-                        st.markdown(
-                            "<div class='calendar-cell'>"
-                            f"<div class='calendar-day'>{day_number}일</div>"
-                            f"<div class='calendar-weather'>{emoji}</div>"
-                            f"<div style='font-size:11px;'>{emotion}</div>"
-                            "</div>",
-                            unsafe_allow_html=True
-                        )
+                        emotion_text = emotion
                     else:
-                        st.markdown(
-                            "<div class='calendar-cell'>"
-                            f"<div class='calendar-day'>{day_number}일</div>"
-                            "<div style='font-size:20px;'>·</div>"
-                            "<div style='font-size:11px;'>기록 없음</div>"
-                            "</div>",
-                            unsafe_allow_html=True
+                        emoji = "📔" if day_number in diary_dates else "·"
+                        emotion_text = (
+                            "일기 있음" if day_number in diary_dates
+                            else "기록 없음"
                         )
 
-    st.caption(
-        "달력에 표시된 감정은 해당 날짜에 저장한 기록이에요."
+                    st.markdown(
+                        "<div class='calendar-cell'>"
+                        f"<div>{day_number}일</div>"
+                        f"<div style='font-size:22px;'>{emoji}</div>"
+                        f"<div style='font-size:11px;'>{emotion_text}</div>"
+                        "</div>",
+                        unsafe_allow_html=True
+                    )
+
+    st.caption("날씨 아이콘은 감정 기록, 📔는 일반 일기가 있는 날이에요.")
+
+    selected_day = st.date_input(
+        "자세히 살펴볼 날짜",
+        value=today,
+        key="calendar_selected_date"
     )
 
-    if not df.empty:
-        selected_day = st.date_input(
-            "자세히 살펴볼 날짜",
-            value=today
+    selected_records = df[
+        df["record_date"].dt.date == selected_day
+    ] if not df.empty else pd.DataFrame()
+
+    if not selected_records.empty:
+        row = selected_records.iloc[0]
+        st.markdown(
+            f"### {EMOTIONS[row['emotion']]['emoji']} "
+            f"{selected_day}의 감정 기록"
         )
+        st.write(f"감정: {row['emotion']}")
+        st.write(f"이유: {row['reason'] or '작성한 이유가 없어요.'}")
+        st.write(f"스트레스: {row['stress']} / 10")
 
-        selected_records = df[
-            df["record_date"].dt.date == selected_day
-        ]
+        if st.button("이 날짜 감정 기록 삭제하기"):
+            delete_record(st.session_state.user_id, selected_day)
+            st.success("감정 기록을 삭제했어요.")
+            st.rerun()
 
-        if not selected_records.empty:
-            row = selected_records.iloc[0]
-            st.markdown(
-                f"### {EMOTIONS[row['emotion']]['emoji']} "
-                f"{selected_day}의 감정 기록"
-            )
-            st.write(f"감정: {row['emotion']}")
-            st.write(f"이유: {row['reason'] or '작성한 이유가 없어요.'}")
-            st.write(f"스트레스: {row['stress']} / 10")
+    diary = load_diary(st.session_state.user_id, selected_day)
 
-            if st.button("이 날짜 기록 삭제하기"):
-                delete_record(
-                    st.session_state.user_id,
-                    selected_day
-                )
-                st.success("기록을 삭제했어요.")
-                st.rerun()
-        else:
-            st.info("이 날짜에는 아직 기록이 없어요.")
+    if diary:
+        st.markdown(f"### 📔 {selected_day}의 일반 일기")
+        st.write(f"**{diary[0]}**")
+        st.write(diary[1])
+
+        if diary[2]:
+            st.image(diary[2], caption="일기에 첨부한 사진")
 
 
 # ------------------------------------------
-# 10. 감정 처방전
+# 11. 일반 일기 + 사진 첨부
+# ------------------------------------------
+
+def show_diary_page():
+    st.header("📔 나의 일기장")
+    st.write(
+        "오늘 있었던 일, 기억하고 싶은 순간, 떠오르는 생각을 "
+        "자유롭게 적어 보세요."
+    )
+
+    st.info(
+        "날짜마다 일기 한 편을 저장할 수 있어요. "
+        "사진은 한 장당 5MB 이하의 JPG, PNG, WEBP 파일을 지원해요."
+    )
+
+    user_id = st.session_state.user_id
+    diary_list = load_diary_list(user_id)
+
+    # 작성하거나 수정할 일기 날짜 선택
+    diary_date = st.date_input(
+        "일기 날짜",
+        value=date.today(),
+        key="diary_date"
+    )
+
+    existing = load_diary(user_id, diary_date)
+
+    # 저장된 일기가 있으면 기존 내용을 불러옴
+    if existing:
+        default_title = existing[0]
+        default_content = existing[1]
+        existing_photo = existing[2]
+        existing_mime = existing[3]
+        updated_at = existing[4]
+
+        st.success("이 날짜에 저장된 일기가 있어요. 수정할 수 있어요.")
+
+        if existing_photo:
+            st.markdown("#### 현재 첨부된 사진")
+            st.image(existing_photo, use_container_width=True)
+            st.caption(f"사진 형식: {existing_mime}")
+
+            if st.button("현재 사진만 삭제하기"):
+                delete_diary_photo(user_id, diary_date)
+                st.success("사진을 삭제했어요. 일기 내용은 유지돼요.")
+                st.rerun()
+
+        st.caption(f"마지막 수정: {updated_at}")
+
+    else:
+        default_title = ""
+        default_content = ""
+        existing_photo = None
+        existing_mime = None
+
+    st.markdown("### ✏️ 일기 작성하기")
+
+    with st.form("diary_form", clear_on_submit=False):
+        title = st.text_input(
+            "일기 제목",
+            value=default_title,
+            max_chars=100,
+            placeholder="예: 친구와 함께한 즐거운 하루"
+        )
+
+        content = st.text_area(
+            "오늘의 이야기",
+            value=default_content,
+            height=250,
+            max_chars=10000,
+            placeholder=(
+                "오늘 무슨 일이 있었나요?\n"
+                "기억하고 싶은 순간이나 생각을 자유롭게 적어 보세요."
+            )
+        )
+
+        uploaded_photo = st.file_uploader(
+            "사진 첨부하기 (선택 사항)",
+            type=["jpg", "jpeg", "png", "webp"],
+            help="휴대폰이나 컴퓨터에 저장된 사진을 선택할 수 있어요."
+        )
+
+        if uploaded_photo is not None:
+            photo_bytes = uploaded_photo.getvalue()
+
+            if len(photo_bytes) <= MAX_PHOTO_SIZE:
+                st.markdown("#### 업로드한 사진 미리 보기")
+                st.image(photo_bytes, use_container_width=True)
+            else:
+                st.error("사진은 한 장당 5MB 이하로 올려 주세요.")
+
+        save_submitted = st.form_submit_button(
+            "💾 일기 저장하기",
+            use_container_width=True
+        )
+
+    if save_submitted:
+        if not title.strip():
+            st.error("일기 제목을 입력해 주세요.")
+        elif not content.strip():
+            st.error("일기 내용을 입력해 주세요.")
+        elif (
+            uploaded_photo is not None
+            and len(uploaded_photo.getvalue()) > MAX_PHOTO_SIZE
+        ):
+            st.error("사진은 한 장당 5MB 이하로 올려 주세요.")
+        else:
+            success, message = save_diary(
+                user_id,
+                diary_date,
+                title,
+                content,
+                uploaded_photo
+            )
+
+            if success:
+                st.success(message)
+                st.rerun()
+            else:
+                st.error(message)
+
+    # 저장된 일기 삭제
+    if existing:
+        st.divider()
+        st.markdown("### 🗑️ 일기 관리")
+
+        confirm_delete = st.checkbox(
+            "이 일기를 삭제하겠습니다.",
+            key=f"confirm_diary_delete_{diary_date}"
+        )
+
+        if st.button("일기 삭제하기", use_container_width=True):
+            if confirm_delete:
+                delete_diary(user_id, diary_date)
+                st.success("일기와 첨부 사진을 삭제했어요.")
+                st.rerun()
+            else:
+                st.warning("삭제하려면 먼저 확인 상자에 체크해 주세요.")
+
+    # 지난 일기 목록
+    st.divider()
+    st.markdown("### 📚 지난 일기")
+
+    diary_list = load_diary_list(user_id)
+
+    if not diary_list:
+        st.info("아직 작성한 일기가 없어요.")
+    else:
+        for saved_date, saved_title, saved_updated, has_photo in diary_list:
+            photo_mark = " 📷" if has_photo else ""
+
+            st.markdown(
+                f"- **{saved_date}** — {saved_title}"
+                f"{photo_mark}"
+            )
+
+
+# ------------------------------------------
+# 12. 감정 처방전
 # ------------------------------------------
 
 def show_advice_page():
     st.header("🧸 감정 처방전")
     st.write(
-        "처방전은 병을 진단하는 것이 아니라, "
-        "마음을 돌보기 위한 작은 활동을 추천하는 공간이에요."
+        "병을 진단하는 것이 아니라, 마음을 돌보기 위한 "
+        "작은 활동을 추천하는 공간이에요."
     )
 
     emotion = st.selectbox(
@@ -660,7 +927,7 @@ def show_advice_page():
         "<div class='weather-banner'>"
         f"<h2>{EMOTIONS[emotion]['emoji']} {emotion} 날씨 처방전</h2>"
         f"<p>{EMOTIONS[emotion]['description']}</p>"
-        "<p>지금 느끼는 감정을 억지로 바꾸지 않아도 괜찮아요. "
+        "<p>감정을 억지로 바꾸지 않아도 괜찮아요. "
         "할 수 있는 작은 행동부터 골라 봐요.</p>"
         "</div>",
         unsafe_allow_html=True
@@ -675,21 +942,20 @@ def show_advice_page():
         )
 
     st.caption(
-        "활동을 했다고 해서 감정이 반드시 달라지는 것은 아니에요. "
         "힘든 감정이 오래 지속되거나 일상생활이 어렵다면 "
         "믿을 만한 어른이나 상담 전문가에게 도움을 요청해 보세요."
     )
 
 
 # ------------------------------------------
-# 11. 감정 표현 연습실
+# 13. 감정 표현 연습실
 # ------------------------------------------
 
 def show_expression_page():
     st.header("💬 감정 표현 연습실")
     st.write(
-        "감정을 구체적으로 표현하면 내가 무엇을 느끼고 "
-        "무엇이 필요한지 이해하는 데 도움이 될 수 있어요."
+        "어떤 일이 있었는지, 무엇을 느꼈는지, "
+        "나에게 무엇이 필요한지 문장으로 만들어 봐요."
     )
 
     examples = {
@@ -719,10 +985,7 @@ def show_expression_page():
         ]
     }
 
-    selected = st.selectbox(
-        "어떤 감정을 표현해 보고 싶나요?",
-        list(examples.keys())
-    )
+    selected = st.selectbox("표현해 보고 싶은 감정", list(examples.keys()))
 
     st.markdown("### 문장 예시")
 
@@ -737,7 +1000,7 @@ def show_expression_page():
     )
 
     feeling = st.text_input(
-        "2. 그때 어떤 감정을 느꼈나요?",
+        "2. 어떤 감정을 느꼈나요?",
         placeholder="예: 서운하고 답답했다."
     )
 
@@ -748,8 +1011,6 @@ def show_expression_page():
 
     if st.button("나의 감정 문장 만들기", use_container_width=True):
         if situation.strip() and feeling.strip() and need.strip():
-            st.markdown("### 내가 만든 감정 표현")
-
             st.success(
                 f"'{situation.strip()}'라는 일이 있었을 때, "
                 f"나는 '{feeling.strip()}'을 느꼈어. "
@@ -758,38 +1019,34 @@ def show_expression_page():
         else:
             st.warning("세 가지 질문에 모두 답해 주세요.")
 
-    st.caption(
-        "이 문장은 나를 이해하기 위한 연습이에요. "
-        "모든 감정을 정확히 설명해야 하는 것은 아니에요."
-    )
-
 
 # ------------------------------------------
-# 12. 감정 변화 분석 그래프
+# 14. 감정 변화 분석 그래프
 # ------------------------------------------
 
 def show_analysis_page(df):
     st.header("📈 감정 변화 분석")
-    st.write(
-        "날짜에 따라 감정 점수와 스트레스 점수가 "
-        "어떻게 달라지는지 비교해 봐요."
-    )
+    st.write("날짜에 따라 감정 점수와 스트레스 점수를 비교해 봐요.")
 
     if df.empty:
-        st.info("아직 기록이 없어요. 감정 날씨를 먼저 기록해 주세요.")
+        st.info("아직 감정 기록이 없어요.")
         return
 
-    start_date = st.date_input(
-        "분석 시작 날짜",
-        value=date.today().replace(day=1),
-        key="analysis_start"
-    )
+    col1, col2 = st.columns(2)
 
-    end_date = st.date_input(
-        "분석 종료 날짜",
-        value=date.today(),
-        key="analysis_end"
-    )
+    with col1:
+        start_date = st.date_input(
+            "분석 시작 날짜",
+            value=date.today().replace(day=1),
+            key="analysis_start"
+        )
+
+    with col2:
+        end_date = st.date_input(
+            "분석 종료 날짜",
+            value=date.today(),
+            key="analysis_end"
+        )
 
     if start_date > end_date:
         st.error("시작 날짜는 종료 날짜보다 늦을 수 없어요.")
@@ -804,8 +1061,6 @@ def show_analysis_page(df):
         st.info("선택한 기간에는 기록이 없어요.")
         return
 
-    # 감정 점수는 EMOTIONS에 정의한 1~5점의 참고용 값
-    # 스트레스는 사용자가 직접 입력한 0~10점 값
     fig = go.Figure()
 
     fig.add_trace(go.Scatter(
@@ -813,8 +1068,7 @@ def show_analysis_page(df):
         y=filtered["emotion_score"],
         mode="lines+markers",
         name="감정 점수",
-        line=dict(color="#E7A55B", width=3),
-        hovertemplate="%{x|%Y-%m-%d}<br>감정 점수: %{y}<extra></extra>"
+        line=dict(color="#E7A55B", width=3)
     ))
 
     fig.add_trace(go.Scatter(
@@ -822,8 +1076,7 @@ def show_analysis_page(df):
         y=filtered["stress"],
         mode="lines+markers",
         name="스트레스",
-        line=dict(color="#8E9EC9", width=3),
-        hovertemplate="%{x|%Y-%m-%d}<br>스트레스: %{y}<extra></extra>"
+        line=dict(color="#8E9EC9", width=3)
     ))
 
     fig.update_layout(
@@ -834,20 +1087,15 @@ def show_analysis_page(df):
         yaxis_title="점수",
         yaxis=dict(range=[0, 10], dtick=1),
         hovermode="x unified",
-        legend=dict(orientation="h", y=1.12),
-        margin=dict(l=20, r=20, t=45, b=20)
+        legend=dict(orientation="h", y=1.12)
     )
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # 요약 수치
     col1, col2, col3 = st.columns(3)
 
     col1.metric("기록한 날", f"{len(filtered)}일")
-    col2.metric(
-        "평균 스트레스",
-        f"{filtered['stress'].mean():.1f} / 10"
-    )
+    col2.metric("평균 스트레스", f"{filtered['stress'].mean():.1f} / 10")
     col3.metric(
         "감정 점수 평균",
         f"{filtered['emotion_score'].mean():.1f} / 5"
@@ -875,22 +1123,20 @@ def show_analysis_page(df):
         plot_bgcolor="#FFFFFF",
         font=dict(color="#51483F"),
         xaxis_title="감정 날씨",
-        yaxis_title="기록 횟수",
-        margin=dict(l=20, r=20, t=20, b=20)
+        yaxis_title="기록 횟수"
     )
 
     st.plotly_chart(count_fig, use_container_width=True)
 
     st.caption(
-        "감정 점수는 감정의 가치를 평가하는 점수가 아니라 "
-        "변화를 시각화하기 위해 임의로 정한 값이에요. "
+        "감정 점수는 변화를 보기 위한 참고용 값이에요. "
         "두 선이 함께 움직여도 한 감정이 다른 감정을 "
         "일으켰다고 단정할 수는 없어요."
     )
 
 
 # ------------------------------------------
-# 13. 한 달 감정 연구 보고서
+# 15. 한 달 감정 연구 보고서
 # ------------------------------------------
 
 def show_report_page(df):
@@ -929,13 +1175,10 @@ def show_report_page(df):
         )
         return
 
-    # 한 달 기록 요약
     total_days = len(month_df)
     avg_stress = month_df["stress"].mean()
-    most_common = month_df["emotion"].value_counts()
-
-    most_emotion = most_common.index[0]
-    most_emoji = EMOTIONS[most_emotion]["emoji"]
+    counts = month_df["emotion"].value_counts()
+    most_emotion = counts.index[0]
 
     col1, col2, col3 = st.columns(3)
 
@@ -943,52 +1186,44 @@ def show_report_page(df):
     col2.metric("평균 스트레스", f"{avg_stress:.1f} / 10")
     col3.metric(
         "가장 자주 기록한 감정",
-        f"{most_emoji} {most_emotion}"
+        f"{EMOTIONS[most_emotion]['emoji']} {most_emotion}"
     )
 
     st.markdown("### 이번 달 감정 기록")
-
-    counts = month_df["emotion"].value_counts()
 
     for emotion, info in EMOTIONS.items():
         count = int(counts.get(emotion, 0))
 
         if count > 0:
-            st.write(
-                f"{info['emoji']} **{emotion}**: {count}회"
-            )
+            st.write(f"{info['emoji']} **{emotion}**: {count}회")
             st.progress(count / total_days)
 
-    # 스트레스가 가장 높았던 기록과 낮았던 기록
-    highest_stress = month_df.loc[month_df["stress"].idxmax()]
-    lowest_stress = month_df.loc[month_df["stress"].idxmin()]
+    highest = month_df.loc[month_df["stress"].idxmax()]
+    lowest = month_df.loc[month_df["stress"].idxmin()]
 
     st.markdown("### 나의 감정 돌아보기")
 
     st.write(
-        f"- 스트레스 점수가 가장 높았던 기록: "
-        f"{highest_stress['record_date'].strftime('%m월 %d일')} "
-        f"({highest_stress['stress']}점)"
+        f"- 스트레스가 가장 높았던 날: "
+        f"{highest['record_date'].strftime('%m월 %d일')} "
+        f"({highest['stress']}점)"
     )
 
     st.write(
-        f"- 스트레스 점수가 가장 낮았던 기록: "
-        f"{lowest_stress['record_date'].strftime('%m월 %d일')} "
-        f"({lowest_stress['stress']}점)"
+        f"- 스트레스가 가장 낮았던 날: "
+        f"{lowest['record_date'].strftime('%m월 %d일')} "
+        f"({lowest['stress']}점)"
     )
 
-    st.markdown("### 스스로에게 질문하기")
+    st.markdown("### 한 달 돌아보기")
 
     reflection = st.text_area(
-        "이번 달을 돌아보며 느낀 점을 적어 보세요.",
-        placeholder=(
-            "예: 친구와 이야기한 날에는 마음이 편안했다. "
-            "다음 달에는 스트레스를 받을 때 잠깐 쉬어 보려고 한다."
-        ),
+        "이번 달을 돌아보며 느낀 점",
+        placeholder="기억하고 싶은 일이나 다음 달의 목표를 적어 보세요.",
         max_chars=1000
     )
 
-    # 보고서 파일로 내려받을 수 있도록 CSV 생성
+    # 감정 기록을 CSV로 다운로드
     export_df = month_df[
         ["record_date", "emotion", "reason", "stress"]
     ].copy()
@@ -1005,11 +1240,8 @@ def show_report_page(df):
     })
 
     st.download_button(
-        "📥 이번 달 기록 다운로드 (CSV)",
-        data=export_df.to_csv(
-            index=False,
-            encoding="utf-8-sig"
-        ),
+        "📥 감정 기록 다운로드 (CSV)",
+        data=export_df.to_csv(index=False, encoding="utf-8-sig"),
         file_name=f"감정연구보고서_{year}_{month:02d}.csv",
         mime="text/csv",
         use_container_width=True
@@ -1019,39 +1251,52 @@ def show_report_page(df):
         st.markdown("### 나의 한 달 돌아보기")
         st.info(reflection)
 
+    # 같은 기간의 일반 일기도 함께 확인
+    diaries = [
+        item for item in load_diary_list(st.session_state.user_id)
+        if datetime.strptime(item[0], "%Y-%m-%d").year == year
+        and datetime.strptime(item[0], "%Y-%m-%d").month == month
+    ]
+
+    st.markdown("### 이번 달 일반 일기")
+    if diaries:
+        for diary_date, diary_title, updated_at, has_photo in diaries:
+            photo_mark = " 📷" if has_photo else ""
+            st.write(f"- {diary_date}: {diary_title}{photo_mark}")
+    else:
+        st.caption("이번 달에 작성한 일반 일기가 없어요.")
+
     st.caption(
-        "이 보고서는 기록한 내용만 요약해요. "
-        "감정의 원인이나 정신건강 상태를 진단하지는 않아요."
+        "이 보고서는 기록을 요약하는 기능이며, "
+        "정신건강 상태를 진단하지 않아요."
     )
 
 
 # ------------------------------------------
-# 14. 로그인 후 메인 화면
+# 16. 로그인 후 메인 화면
 # ------------------------------------------
 
 def show_main_app():
-    # 로그인한 사용자의 기록만 불러오기
+    # 현재 로그인한 사용자의 감정 기록만 불러오기
     df = load_records(st.session_state.user_id)
 
     st.markdown(
         "<div class='weather-banner'>"
         "<h1>🌦️ 감정날씨 연구소</h1>"
-        "<p>내 마음의 날씨를 관찰하고 기록해요.</p>"
+        "<p>내 마음의 날씨를 관찰하고, 하루의 이야기를 기록해요.</p>"
         "</div>",
         unsafe_allow_html=True
     )
 
     with st.sidebar:
         st.markdown("## 🌷 메뉴")
-
-        st.write(
-            f"안녕하세요, **{st.session_state.username}** 연구원님!"
-        )
+        st.write(f"안녕하세요, **{st.session_state.username}** 연구원님!")
 
         menu = st.radio(
             "원하는 기능을 선택해 주세요.",
             [
                 "오늘의 감정 날씨",
+                "일반 일기",
                 "감정 달력",
                 "감정 처방전",
                 "감정 표현 연습실",
@@ -1061,7 +1306,6 @@ def show_main_app():
         )
 
         st.divider()
-
         st.caption("오늘도 내 마음을 천천히 살펴봐요.")
 
         if st.button("로그아웃", use_container_width=True):
@@ -1069,9 +1313,11 @@ def show_main_app():
             st.session_state.username = None
             st.rerun()
 
-    # 메뉴에서 고른 기능만 보여 주기
     if menu == "오늘의 감정 날씨":
         show_today_page(df)
+
+    elif menu == "일반 일기":
+        show_diary_page()
 
     elif menu == "감정 달력":
         show_calendar_page(df)
@@ -1090,7 +1336,7 @@ def show_main_app():
 
 
 # ------------------------------------------
-# 15. 프로그램 시작
+# 17. 프로그램 시작
 # ------------------------------------------
 
 if st.session_state.user_id is None:
