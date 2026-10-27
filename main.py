@@ -903,48 +903,69 @@ def show_calendar_page(user_id):
 # ==================================================
 
 def show_expression_page():
-    st.header("감정 표현 연습")
-    st.write("내 감정을 구체적인 말로 표현해 보세요.")
+    st.header("💬 감정 표현 연습실")
+    st.write("상황, 감정, 필요한 것을 연결해 문장을 만들어 봐요.")
 
-    situations = {
-        "친구가 약속을 지키지 않았을 때": [
-            "나는 약속을 지키지 않아서 속상했어.",
-            "다음에는 미리 알려 주면 좋겠어."
+    examples = {
+        "짜증 나": [
+            "내 말을 끝까지 들어 주지 않아서 답답했어.",
+            "계획이 갑자기 바뀌어서 당황스러웠어."
         ],
-        "발표를 앞두고 긴장될 때": [
-            "나는 발표를 잘할 수 있을지 걱정돼.",
-            "천천히 준비하고 연습해 보고 싶어."
+        "슬퍼": [
+            "친구와 함께하지 못해서 외로웠어.",
+            "기대했던 일이 잘되지 않아 속상했어."
         ],
-        "친구가 나를 칭찬했을 때": [
-            "네가 칭찬해 줘서 기뻤어.",
-            "내 노력을 알아줘서 고마워."
+        "불안해": [
+            "발표할 때 실수할까 봐 걱정돼.",
+            "결과를 아직 몰라서 마음이 조급해."
         ],
-        "혼자 있고 싶을 때": [
-            "지금은 혼자 생각할 시간이 필요해.",
-            "조금 쉬고 나서 다시 이야기하고 싶어."
+        "화가 나": [
+            "내 입장을 설명할 기회가 없어서 화가 났어.",
+            "약속이 지켜지지 않아 실망스럽고 화가 나."
         ],
-        "도움이 필요할 때": [
-            "지금 혼자 해결하기 어려워.",
-            "이 부분을 함께 살펴봐 줄 수 있어?"
+        "좋아": [
+            "내 노력을 알아봐 줘서 뿌듯했어.",
+            "친구와 즐거운 시간을 보내서 행복했어."
+        ],
+        "모르겠어": [
+            "무슨 감정인지 잘 모르겠지만 마음이 복잡해.",
+            "지금은 혼자 생각할 시간이 필요해."
         ]
     }
 
-    situation = st.selectbox(
-        "상황 선택하기", list(situations.keys())
+    selected = st.selectbox("표현해 보고 싶은 감정", list(examples.keys()))
+
+    st.markdown("### 문장 예시")
+
+    for example in examples[selected]:
+        st.info(example)
+
+    st.markdown("### 나만의 감정 문장 만들기")
+
+    situation = st.text_input(
+        "1. 어떤 일이 있었나요?",
+        placeholder="예: 친구가 내 이야기를 듣지 않았다."
     )
 
-    st.subheader("표현 예시")
-
-    for sentence in situations[situation]:
-        st.info(sentence)
-
-    expression = st.text_area(
-        "나만의 문장 만들기",
-        placeholder="나는 ______해서 ______한 기분이 들었어."
+    feeling = st.text_input(
+        "2. 어떤 감정을 느꼈나요?",
+        placeholder="예: 서운하고 답답했다."
     )
 
-    if expression.strip():
-        st.success("감정을 문장으로 표현해 보았어요.")
+    need = st.text_input(
+        "3. 나에게 무엇이 필요했나요?",
+        placeholder="예: 내 이야기를 끝까지 들어 주는 것"
+    )
+
+    if st.button("나의 감정 문장 만들기", use_container_width=True):
+        if situation.strip() and feeling.strip() and need.strip():
+            st.success(
+                f"'{situation.strip()}'라는 일이 있었을 때, "
+                f"나는 '{feeling.strip()}'을 느꼈어. "
+                f"나에게는 '{need.strip()}'이 필요했어."
+            )
+        else:
+            st.warning("세 가지 질문에 모두 답해 주세요.")
 
 
 # ==================================================
