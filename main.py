@@ -52,46 +52,109 @@ EMOTION_ADVICE = {
 
 st.markdown("""
 <style>
+/* 전체 배경: 부드러운 연노랑 */
 .stApp {
-    background-color: #FFF9F0;
+    background-color: #FFF9E8;
+    color: #4F5847;
 }
 
+/* 제목 */
 h1, h2, h3 {
-    color: #65534A;
+    color: #536448;
+    letter-spacing: -0.5px;
 }
 
-.subtitle {
-    color: #89776B;
-    font-size: 17px;
+/* 본문 */
+p, label, .stMarkdown {
+    color: #5D6255;
 }
 
-[data-testid="stMetric"] {
-    background-color: #FFFFFF;
-    padding: 15px;
+/* 사이드바 */
+section[data-testid="stSidebar"] {
+    background-color: #F2F5E8;
+    border-right: 1px solid #E1E8D3;
+}
+
+/* 입력 칸 */
+.stTextInput input,
+.stTextArea textarea,
+.stDateInput input,
+.stNumberInput input {
+    background-color: #FFFEF8;
+    border: 1px solid #DCE5CD;
     border-radius: 12px;
-    border: 1px solid #F0E2D3;
+    color: #4F5847;
 }
 
-/* 일반 버튼 */
-div.stButton > button {
+/* 선택 메뉴 */
+.stSelectbox [data-baseweb="select"] > div {
+    background-color: #FFFEF8;
+    border-color: #DCE5CD;
+    border-radius: 12px;
+}
+
+/* 버튼 */
+.stButton > button,
+.stFormSubmitButton > button {
+    background-color: #E6EED8;
+    color: #4F6242;
+    border: 1px solid #D5E2C5;
+    border-radius: 14px;
+    padding: 0.45rem 1rem;
+    transition: background-color 0.2s ease;
+}
+
+/* 버튼에 마우스를 올렸을 때 */
+.stButton > button:hover,
+.stFormSubmitButton > button:hover {
+    background-color: #D6E5C1;
+    border-color: #C3D5AC;
+    color: #405437;
+}
+
+/* 입력 칸 선택 시 */
+.stTextInput input:focus,
+.stTextArea textarea:focus {
+    border-color: #A9C58D;
+    box-shadow: 0 0 0 1px #A9C58D;
+}
+
+/* 지표 카드 */
+[data-testid="stMetric"] {
+    background-color: #FFFEF8;
+    padding: 16px;
+    border-radius: 16px;
+    border: 1px solid #E3E9D7;
+}
+
+/* 탭 */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 8px;
+    background-color: #F3F4E8;
+    border-radius: 14px;
+    padding: 5px;
+}
+
+.stTabs [data-baseweb="tab"] {
     border-radius: 10px;
-    border: 1px solid #E8D7C5;
-    background-color: #FFFFFF;
-    color: #65534A;
 }
 
-div.stButton > button:hover {
-    background-color: #FCEBD8;
-    border-color: #D8B99A;
-    color: #65534A;
+/* 알림 상자 */
+.stAlert {
+    border-radius: 14px;
 }
 
-/* 지난 일기 목록은 사진처럼 간결한 글 형태로 표시 */
+/* 구분선 */
+hr {
+    border-color: #E5E8D9;
+}
+
+/* 지난 일기 목록: 기존의 간결한 글머리표 디자인 유지 */
 .st-key-past_diary_list div[data-testid="stButton"] button {
     background-color: transparent;
     border: none;
     box-shadow: none;
-    color: #493F39;
+    color: #4F5847;
     text-align: left;
     justify-content: flex-start;
     padding: 0.15rem 0;
@@ -100,16 +163,17 @@ div.stButton > button:hover {
 }
 
 .st-key-past_diary_list div[data-testid="stButton"] button:hover {
-    background-color: #FCEBD8;
+    background-color: #EDF2E3;
     border: none;
-    color: #493F39;
+    color: #405437;
 }
 
+/* 일기 내용 */
 .diary-content {
-    background-color: #FFFFFF;
-    border: 1px solid #EADBCB;
-    border-radius: 12px;
-    padding: 18px;
+    background-color: #FFFEF8;
+    border: 1px solid #E1E8D3;
+    border-radius: 16px;
+    padding: 20px;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -1199,10 +1263,6 @@ def show_main_app():
     user_id = st.session_state.user_id
 
     st.title("감정날씨 연구소")
-    st.markdown(
-        '<p class="subtitle">내 마음을 관찰하고 기록하는 작은 연구소</p>',
-        unsafe_allow_html=True
-    )
 
     pages = [
         "오늘의 감정 날씨",
