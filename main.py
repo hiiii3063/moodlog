@@ -562,15 +562,17 @@ def show_diary_content(diary):
     st.markdown(f"### 📖 {diary[2] or '(제목 없음)'}")
     st.caption(f"작성 날짜: {diary[1]}")
 
-    # 일기 내용이 흰색 박스 안에 표시되도록 구성
-    with st.container(border=True):
-        st.markdown(
-            f"<div style='background-color:#FFFEF8; padding:16px; "
-            f"border-radius:12px; white-space:pre-wrap; color:#4F5847;'>"
-            f"{(diary[3] or '').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace(chr(10), '<br>')}"
-            f"</div>",
-            unsafe_allow_html=True
-        )
+    # 테두리와 흰색 배경을 하나의 박스로 만들어 가장자리가 어긋나지 않게 표시
+    diary_text = (diary[3] or '').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace(chr(10), '<br>')
+    st.markdown(
+        f"<div style='box-sizing:border-box; width:100%; margin:0; "
+        f"border:1px solid #D8D1C2; border-radius:10px; "
+        f"background-color:#FFFEF8; padding:16px; "
+        f"white-space:pre-wrap; overflow-wrap:anywhere; color:#4F5847;'>"
+        f"{diary_text}"
+        f"</div>",
+        unsafe_allow_html=True
+    )
 
     if diary[4]:
         image_col, _ = st.columns([1, 2])
