@@ -562,12 +562,15 @@ def show_diary_content(diary):
     st.markdown(f"### 📖 {diary[2] or '(제목 없음)'}")
     st.caption(f"작성 날짜: {diary[1]}")
 
-    st.markdown(
-        '<div class="diary-content">',
-        unsafe_allow_html=True
-    )
-    st.write(diary[3] or "")
-    st.markdown("</div>", unsafe_allow_html=True)
+    # 일기 내용이 흰색 박스 안에 표시되도록 구성
+    with st.container(border=True):
+        st.markdown(
+            f"<div style='background-color:#FFFEF8; padding:16px; "
+            f"border-radius:12px; white-space:pre-wrap; color:#4F5847;'>"
+            f"{(diary[3] or '').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace(chr(10), '<br>')}"
+            f"</div>",
+            unsafe_allow_html=True
+        )
 
     if diary[4]:
         image_col, _ = st.columns([1, 2])
@@ -579,56 +582,73 @@ def show_diary_content(diary):
             )
 
 
-# ==================================================
-# 8. 나의 일기
-#    새 일기 작성 영역을 맨 위에 배치
-# ==================================================
+def clear_diary_fields_after_saved_date_change():
+    """저장한 뒤 날짜를 바꾸면 작성 입력란을 비운다."""
+    saved_date = st.session_state.get("diary_saved_date")
+    new_date = st.session_state.get("diary_date_picker")
+
+    if saved_date and new_date and str(new_date) != str(saved_date):
+        st.session_state.pop("diary_title", None)
+        st.session_state.pop("diary_content", None)
+        st.session_state.pop("diary_upload", None)
+        st.session_state.diary_saved_date = None
+
 
 def show_diary_page(user_id):
     st.header("나의 일기")
 
-    # --------------------------------------------------
-    # 새 일기 쓰기 / 일기 수정하기: 페이지 맨 위
-    # --------------------------------------------------
-
+    # 새 일기 쓰기 영역을 맨 위에 배치
     edit_date = st.session_state.get("diary_edit_date")
 
     if edit_date:
         st.subheader("일기 수정하기")
-        form_date = date.fromisoformat(edit_date)
+        default_date = date.fromisoformat(edit_date)
     else:
         st.subheader("새 일기 쓰기")
-        form_date = date.today()
+        default_date = date.today()
 
-    existing = get_diary(user_id, form_date.isoformat())
+    if "diary_date_picker" not in st.session_state:
+        st.session_state.diary_date_picker = default_date
+
+    # 날짜 선택은 폼 바깥에 두어 날짜 변경 즉시 반영
+    diary_date = st.date_input(
+        "일기 날짜",
+        value=st.session_state.diary_date_picker,
+        key="diary_date_picker",
+        on_change=clear_diary_fields_after_saved_date_change
+    )
+
+    date_text = diary_date.isoformat()
+    existing = get_diary(user_id, date_text) if edit_date else None
+
+    # 수정 모드에 처음 진입했을 때만 기존 내용을 입력란에 채운다.
+    if edit_date and not st.session_state.get("diary_edit_fields_loaded"):
+        if existing:
+            st.session_state.diary_title = existing[2] or ""
+            st.session_state.diary_content = existing[3] or ""
+        st.session_state.diary_edit_fields_loaded = True
 
     with st.form("diary_form", clear_on_submit=False):
-        diary_date = st.date_input(
-            "일기 날짜",
-            value=form_date,
-            key=f"diary_date_input_{form_date.isoformat()}"
-        )
-
         title = st.text_input(
             "일기 제목",
-            value=existing[2] if existing else "",
+            value=existing[2] if existing and "diary_title" not in st.session_state else "",
             placeholder="예: 오늘 있었던 특별한 일",
-            key=f"diary_title_input_{form_date.isoformat()}"
+            key="diary_title"
         )
 
         content = st.text_area(
             "일기 내용",
-            value=existing[3] if existing else "",
+            value=existing[3] if existing and "diary_content" not in st.session_state else "",
             height=180,
             placeholder="오늘 있었던 일과 느낀 감정을 적어 보세요.",
-            key=f"diary_content_input_{form_date.isoformat()}"
+            key="diary_content"
         )
 
         uploaded_photo = st.file_uploader(
             "사진 첨부하기 (선택)",
             type=["jpg", "jpeg", "png", "webp"],
             help="최대 5MB",
-            key=f"diary_upload_{form_date.isoformat()}"
+            key="diary_upload"
         )
 
         submitted = st.form_submit_button(
@@ -636,71 +656,51 @@ def show_diary_page(user_id):
             use_container_width=True
         )
 
+    # 기존에 저장된 사진만 표시하며, 새로 업로드한 사진 미리보기는 표시하지 않는다.
     if existing and existing[4]:
         st.caption("현재 저장된 사진")
-
         image_col, _ = st.columns([1, 2])
         with image_col:
             st.image(existing[4], width=DIARY_PHOTO_WIDTH)
 
-        if st.button(
-            "현재 사진 삭제하기",
-            key=f"remove_diary_photo_{form_date.isoformat()}"
-        ):
-            delete_diary_photo(user_id, form_date.isoformat())
+        if st.button("현재 사진 삭제하기", key=f"remove_diary_photo_{date_text}"):
+            delete_diary_photo(user_id, date_text)
             st.success("사진을 삭제했습니다.")
             st.rerun()
 
-    photo_bytes = None
-    photo_mime = None
-
-    if uploaded_photo is not None:
-        photo_bytes = uploaded_photo.getvalue()
-        photo_mime = uploaded_photo.type
-
-        if len(photo_bytes) > MAX_PHOTO_SIZE:
-            st.error("사진 크기는 5MB 이하여야 합니다.")
-        else:
-            st.caption("업로드한 사진 미리 보기")
-
-            image_col, _ = st.columns([1, 2])
-            with image_col:
-                st.image(photo_bytes, width=DIARY_PHOTO_WIDTH)
+    photo_bytes = uploaded_photo.getvalue() if uploaded_photo is not None else None
+    photo_mime = uploaded_photo.type if uploaded_photo is not None else None
 
     if submitted:
         if not title.strip():
             st.warning("일기 제목을 입력해 주세요.")
         elif not content.strip():
             st.warning("일기 내용을 입력해 주세요.")
-        elif (
-            uploaded_photo is not None
-            and len(uploaded_photo.getvalue()) > MAX_PHOTO_SIZE
-        ):
+        elif photo_bytes is not None and len(photo_bytes) > MAX_PHOTO_SIZE:
             st.error("사진 크기는 5MB 이하여야 합니다.")
         else:
             save_diary(
                 user_id,
-                diary_date.isoformat(),
+                date_text,
                 title.strip(),
                 content.strip(),
                 photo_bytes,
                 photo_mime
             )
-
-            st.session_state.selected_diary_date = diary_date.isoformat()
+            st.session_state.selected_diary_date = date_text
+            st.session_state.diary_saved_date = date_text
             st.session_state.diary_edit_date = None
+            st.session_state.diary_edit_fields_loaded = False
             st.success("일기를 저장했습니다.")
             st.rerun()
 
     if edit_date:
         if st.button("수정 취소", key="cancel_diary_edit"):
             st.session_state.diary_edit_date = None
+            st.session_state.diary_edit_fields_loaded = False
             st.rerun()
 
-    # --------------------------------------------------
-    # 지난 일기: 작성 영역 아래에 사진과 같은 목록으로 표시
-    # --------------------------------------------------
-
+    # 지난 일기 목록
     st.divider()
     st.subheader("🗂️ 지난 일기")
     st.caption("날짜와 제목이 있는 줄을 누르면 일기를 읽을 수 있어요.")
@@ -710,15 +710,12 @@ def show_diary_page(user_id):
     if not all_diaries:
         st.info("아직 작성한 일기가 없습니다.")
     else:
-        # 컨테이너 안의 버튼만 목록처럼 보이도록 CSS 적용
         with st.container(key="past_diary_list"):
             for diary in all_diaries:
                 diary_id = diary[0]
                 diary_date = diary[1]
                 diary_title = diary[2] or "(제목 없음)"
                 photo_icon = " 📷" if diary[4] else ""
-
-                # 날짜 또는 제목이 포함된 한 줄 전체를 클릭 가능하게 구성
                 label = f"•　{diary_date} — {diary_title}{photo_icon}"
 
                 if st.button(
@@ -728,12 +725,9 @@ def show_diary_page(user_id):
                 ):
                     st.session_state.selected_diary_date = diary_date
                     st.session_state.diary_edit_date = None
+                    st.session_state.diary_edit_fields_loaded = False
                     st.session_state.confirm_delete_diary = None
                     st.rerun()
-
-    # --------------------------------------------------
-    # 클릭한 일기 내용
-    # --------------------------------------------------
 
     selected_date = st.session_state.get("selected_diary_date")
     selected = get_diary(user_id, selected_date) if selected_date else None
@@ -746,38 +740,28 @@ def show_diary_page(user_id):
         col1, col2, col3 = st.columns(3)
 
         with col1:
-            if st.button(
-                "닫기",
-                key="close_selected_diary",
-                use_container_width=True
-            ):
+            if st.button("닫기", key="close_selected_diary", use_container_width=True):
                 st.session_state.selected_diary_date = None
                 st.rerun()
 
         with col2:
-            if st.button(
-                "수정하기",
-                key="edit_selected_diary",
-                use_container_width=True
-            ):
+            if st.button("수정하기", key="edit_selected_diary", use_container_width=True):
                 st.session_state.diary_edit_date = selected[1]
+                st.session_state.diary_date_picker = date.fromisoformat(selected[1])
+                st.session_state.diary_edit_fields_loaded = False
+                st.session_state.pop("diary_title", None)
+                st.session_state.pop("diary_content", None)
+                st.session_state.pop("diary_upload", None)
                 st.rerun()
 
         with col3:
-            if st.button(
-                "삭제하기",
-                key="delete_selected_diary",
-                use_container_width=True
-            ):
+            if st.button("삭제하기", key="delete_selected_diary", use_container_width=True):
                 st.session_state.confirm_delete_diary = selected[1]
                 st.rerun()
 
-    # 삭제 확인
     confirm_date = st.session_state.get("confirm_delete_diary")
-
     if confirm_date:
         st.warning(f"{confirm_date} 일기를 삭제할까요?")
-
         yes_col, no_col = st.columns(2)
 
         with yes_col:
