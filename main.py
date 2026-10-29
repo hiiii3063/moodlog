@@ -474,8 +474,8 @@ def show_login_page():
                 st.warning("아이디와 비밀번호를 모두 입력해 주세요.")
             elif len(new_username.strip()) < 3:
                 st.warning("아이디는 3글자 이상이어야 합니다.")
-            elif len(new_password) < 4:
-                st.warning("비밀번호는 4글자 이상이어야 합니다.")
+            elif len(new_password) < 8:
+                st.warning("비밀번호는 8글자 이상이어야 합니다.")
             elif new_password != confirm_password:
                 st.error("비밀번호가 서로 다릅니다.")
             else:
