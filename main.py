@@ -500,7 +500,7 @@ def show_login_page():
 # ==================================================
 
 def show_emotion_page(user_id):
-    st.header("오늘의 감정 날씨")
+    st.header("오늘의 감정 날씨☁️")
     st.write("오늘 내 마음은 어떤 날씨였나요?")
 
     selected_date = st.date_input(
@@ -545,7 +545,7 @@ def show_emotion_page(user_id):
         st.rerun()
 
     st.divider()
-    st.subheader("오늘의 감정 처방")
+    st.subheader("오늘의 감정 처방💊")
     st.markdown(f"### {WEATHER_OPTIONS[weather]['emoji']} {weather}")
     st.write(EMOTION_ADVICE[weather])
 
@@ -784,7 +784,7 @@ def show_diary_page(user_id):
 # ==================================================
 
 def show_calendar_page(user_id):
-    st.header("감정 달력")
+    st.header("감정 달력🗓️")
     st.write("달력에서 날짜를 누르면 그날의 감정과 일기를 확인할 수 있어요.")
 
     today = date.today()
