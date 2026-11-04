@@ -15,7 +15,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 # ==================================================
 
 st.set_page_config(
-    page_title="감정날씨 연구소",
+    page_title="감정날씨 연구소🏢",
     page_icon="🌦️",
     layout="wide"
 )
