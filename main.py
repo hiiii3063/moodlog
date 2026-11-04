@@ -597,7 +597,7 @@ def clear_diary_fields_after_saved_date_change():
 
 
 def show_diary_page(user_id):
-    st.header("나의 일기")
+    st.header("나의 일기✍️")
 
     # 새 일기 쓰기 영역을 맨 위에 배치
     edit_date = st.session_state.get("diary_edit_date")
@@ -1023,7 +1023,7 @@ def show_expression_page():
 # ==================================================
 
 def show_analysis_page(user_id):
-    st.header("감정 변화 분석")
+    st.header("감정 변화 분석📊")
     st.write("감정 점수와 스트레스의 변화를 비교해 보세요.")
 
     with get_connection() as conn:
@@ -1145,7 +1145,7 @@ def show_analysis_page(user_id):
 # ==================================================
 
 def show_monthly_report(user_id):
-    st.header("월간 감정 연구 보고서")
+    st.header("월간 감정 연구 보고서📑")
 
     today = date.today()
 
@@ -1246,7 +1246,7 @@ def show_monthly_report(user_id):
 # ==================================================
 
 def show_my_info_page(user_id):
-    st.header("내 정보")
+    st.header("내 정보🙂")
     st.write(f"로그인 아이디: **{st.session_state.username}**")
 
     st.subheader("비밀번호 변경")
