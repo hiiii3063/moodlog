@@ -15,7 +15,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 # ==================================================
 
 st.set_page_config(
-    page_title="감정날씨 연구소🏢",
+    page_title="감정날씨 연구소",
     page_icon="🌦️",
     layout="wide"
 )
@@ -430,7 +430,7 @@ def delete_diary(user_id, diary_date):
 # ==================================================
 
 def show_login_page():
-    st.title("감정날씨 연구소")
+    st.title("감정날씨 연구소🏢")
     st.write("오늘의 마음을 날씨처럼 기록해 보세요.")
 
     tab_login, tab_signup = st.tabs(["로그인", "회원가입"])
@@ -597,7 +597,7 @@ def clear_diary_fields_after_saved_date_change():
 
 
 def show_diary_page(user_id):
-    st.header("나의 일기✍️")
+    st.header("나의 일기📒")
 
     # 새 일기 쓰기 영역을 맨 위에 배치
     edit_date = st.session_state.get("diary_edit_date")
@@ -606,7 +606,7 @@ def show_diary_page(user_id):
         st.subheader("일기 수정하기")
         default_date = date.fromisoformat(edit_date)
     else:
-        st.subheader("새 일기 쓰기")
+        st.subheader("새 일기 쓰기✍️")
         default_date = date.today()
 
     if "diary_date_picker" not in st.session_state:
@@ -1333,7 +1333,7 @@ def show_my_info_page(user_id):
 def show_main_app():
     user_id = st.session_state.user_id
 
-    st.title("감정날씨 연구소")
+    st.title("감정날씨 연구소🏢")
 
     pages = [
         "오늘의 감정 날씨",
