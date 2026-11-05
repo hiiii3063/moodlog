@@ -1,4 +1,3 @@
-
 import os
 import base64
 import calendar
@@ -94,3 +93,4 @@ section[data-testid="stSidebar"] {
 }
 
 /* 버튼 */
+.stButton > button,
