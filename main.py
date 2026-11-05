@@ -982,16 +982,6 @@ def show_analysis_page(user_id):
 
     st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader("기록 목록")
-
-    st.dataframe(
-        filtered[
-            ["날짜", "감정 날씨", "감정 점수", "스트레스", "이유"]
-        ],
-        use_container_width=True,
-        hide_index=True
-    )
-
     st.caption(
         "감정 점수는 참고용이며 심리 상태를 진단하는 지표가 아닙니다."
     )
