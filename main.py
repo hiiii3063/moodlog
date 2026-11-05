@@ -1,126 +1,96 @@
-        change_submitted = st.form_submit_button(
-            "비밀번호 변경", use_container_width=True
-        )
 
-    if change_submitted:
-        result = supabase.table("account").select("password_hash").eq("id", user_id).limit(1).execute()
-        rows = result.data or []
-        row = rows[0] if rows else None
+import os
+import base64
+import calendar
+from datetime import date
 
-        if not row or not check_password_hash(row["password_hash"], current_password):
-            st.error("현재 비밀번호가 올바르지 않습니다.")
-        elif len(new_password) < 8:
-            st.warning("새 비밀번호는 8자 이상으로 설정해 주세요.")
-        elif new_password != confirm_new_password:
-            st.error("새 비밀번호가 서로 일치하지 않습니다.")
-        elif check_password_hash(row["password_hash"], new_password):
-            st.warning("현재 비밀번호와 다른 비밀번호를 입력해 주세요.")
-        else:
-            supabase.table("account").update({
-                "password_hash": generate_password_hash(new_password)
-            }).eq("id", user_id).execute()
-            st.success("비밀번호가 변경되었습니다.")
-
-    st.divider()
-    st.subheader("계정 삭제")
-    st.warning("계정을 삭제하면 이 계정의 감정 기록과 일기가 모두 삭제되며 되돌릴 수 없습니다.")
-
-    with st.form("delete_account_form"):
-        delete_password = st.text_input(
-            "계정 삭제를 위해 현재 비밀번호를 입력하세요",
-            type="password",
-            key="myinfo_delete_password"
-        )
-        confirm_delete = st.checkbox(
-            "감정 기록과 일기를 포함한 계정 데이터가 모두 삭제되는 것에 동의합니다.",
-            key="myinfo_confirm_delete"
-        )
-        delete_submitted = st.form_submit_button(
-            "계정 삭제", use_container_width=True
-        )
-
-    if delete_submitted:
-        if not confirm_delete:
-            st.error("계정 삭제 동의 항목을 확인해 주세요.")
-        else:
-            result = supabase.table("account").select("password_hash").eq("id", user_id).limit(1).execute()
-            rows = result.data or []
-            row = rows[0] if rows else None
-
-            if not row or not check_password_hash(row["password_hash"], delete_password):
-                st.error("비밀번호가 올바르지 않습니다. 계정을 삭제하지 않았습니다.")
-            else:
-                supabase.table("diary").delete().eq("user_id", user_id).execute()
-                supabase.table("emotion").delete().eq("user_id", user_id).execute()
-                supabase.table("account").delete().eq("id", user_id).execute()
-                st.session_state.clear()
-                st.rerun()
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+from werkzeug.security import generate_password_hash, check_password_hash
 
 
 # ==================================================
-# 13. 메인 앱
+# 1. 기본 설정
 # ==================================================
 
-def show_main_app():
-    user_id = st.session_state.user_id
+st.set_page_config(
+    page_title="감정날씨 연구소",
+    page_icon="🌦️",
+    layout="wide"
+)
 
-    st.title("감정날씨 연구소")
+DB_PATH = os.environ.get("DB_PATH", "emotion_weather.db")
+MAX_PHOTO_SIZE = 5 * 1024 * 1024
+DIARY_PHOTO_WIDTH = 300
+CALENDAR_PHOTO_WIDTH = 200
 
-    pages = [
-        "오늘의 감정 날씨",
-        "나의 일기",
-        "감정 달력",
-        "감정 표현 연습",
-        "감정 변화 분석",
-        "월간 감정 보고서",
-        "내 정보"
-    ]
+WEATHER_OPTIONS = {
+    "맑음": {"score": 5, "emoji": "☀️"},
+    "무지개": {"score": 5, "emoji": "🌈"},
+    "구름 조금": {"score": 4, "emoji": "🌤️"},
+    "흐림": {"score": 3, "emoji": "☁️"},
+    "비": {"score": 2, "emoji": "🌧️"},
+    "번개": {"score": 1, "emoji": "⛈️"},
+    "안개": {"score": 3, "emoji": "🌫️"},
+}
 
-    with st.sidebar:
-        st.markdown("## 🌷 메뉴")
-        st.write(f"로그인 계정: **{st.session_state.username}**")
-
-        current_page = st.session_state.get(
-            "page", "오늘의 감정 날씨"
-        )
-
-        if current_page not in pages:
-            current_page = pages[0]
-
-        page = st.radio(
-            "이동할 메뉴",
-            pages,
-            index=pages.index(current_page)
-        )
-
-        st.session_state.page = page
-        st.divider()
-
-        if st.button("로그아웃", use_container_width=True):
-            st.session_state.clear()
-            st.rerun()
-
-    if page == "오늘의 감정 날씨":
-        show_emotion_page(user_id)
-    elif page == "나의 일기":
-        show_diary_page(user_id)
-    elif page == "감정 달력":
-        show_calendar_page(user_id)
-    elif page == "감정 표현 연습":
-        show_expression_page()
-    elif page == "감정 변화 분석":
-        show_analysis_page(user_id)
-    elif page == "월간 감정 보고서":
-        show_monthly_report(user_id)
-    elif page == "내 정보":
-        show_my_info_page(user_id)
+EMOTION_ADVICE = {
+    "맑음": "기분이 좋았던 이유를 기록해 보세요. 즐거웠던 순간을 기억하는 데 도움이 됩니다.",
+    "무지개": "여러 감정이 함께 느껴졌을 수 있어요. 기뻤던 점과 아쉬웠던 점을 나누어 적어 보세요.",
+    "구름 조금": "마음이 복잡하다면 잠깐 쉬면서 지금 느끼는 감정을 살펴보세요.",
+    "흐림": "기분이 가라앉을 때는 좋아하는 음악을 듣거나 편안한 활동을 해 보세요.",
+    "비": "속상한 감정도 자연스러운 감정이에요. 믿을 수 있는 사람에게 마음을 이야기해 보세요.",
+    "번개": "감정이 강하게 느껴질 때는 잠시 멈추고 천천히 호흡해 보세요.",
+    "안개": "감정이 무엇인지 정확히 알기 어렵다면 가까운 감정 단어부터 찾아보세요.",
+}
 
 
 # ==================================================
-# 14. 앱 실행
+# 2. 디자인
 # ==================================================
 
-if "user_id" not in st.session_state:
-    show_login_page()
-else:
-    show_main_app()
+st.markdown("""
+<style>
+/* 전체 배경: 부드러운 연노랑 */
+.stApp {
+    background-color: #FFF9E8;
+    color: #4F5847;
+}
+
+/* 제목 */
+h1, h2, h3 {
+    color: #536448;
+    letter-spacing: -0.5px;
+}
+
+/* 본문 */
+p, label, .stMarkdown {
+    color: #5D6255;
+}
+
+/* 사이드바 */
+section[data-testid="stSidebar"] {
+    background-color: #F2F5E8;
+    border-right: 1px solid #E1E8D3;
+}
+
+/* 입력 칸 */
+.stTextInput input,
+.stTextArea textarea,
+.stDateInput input,
+.stNumberInput input {
+    background-color: #FFFEF8;
+    border: 1px solid #DCE5CD;
+    border-radius: 12px;
+    color: #4F5847;
+}
+
+/* 선택 메뉴 */
+.stSelectbox [data-baseweb="select"] > div {
+    background-color: #FFFEF8;
+    border-color: #DCE5CD;
+    border-radius: 12px;
+}
+
+/* 버튼 */
